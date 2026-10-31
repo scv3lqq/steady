@@ -1,0 +1,9 @@
+data/
+*.db
+*.db-wal
+*.db-shm
+bin/
+web/node_modules/
+.env
+.DS_Store
+.claude/settings.local.json

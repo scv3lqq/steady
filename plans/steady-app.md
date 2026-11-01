@@ -1243,7 +1243,7 @@ Files: `README.md`, `AGENTS.md`.
   reach it through an SSH tunnel or a reverse proxy that adds auth and whose host goes into `STEADY_ALLOWED_HOSTS`,
   `http.CrossOriginProtection`, Host allowlist against DNS rebinding, CSP); Data (one SQLite file in WAL mode,
   backup with `sqlite3 <db> ".backup <file>"` or `VACUUM INTO`, deleted habits purged after 24 h); Deploy
-  (pointer to `deploy/README.md`, release binaries from `steady/v*` tags with `SHA256SUMS` and provenance);
+  (pointer to `deploy/README.md`, release binaries from `steady/v*` tags with `SHA256SUMS` and provenance; state that the attest step needs a public repository on a personal plan, so a tag pushed while the repository is private fails that step and publishes no release);
   Development (S15 targets, `make check` is what CI runs; generated code is committed). English, no
   personal hosts or paths, no em dash.
 - `AGENTS.md` edits (quote-exact; keep everything else):

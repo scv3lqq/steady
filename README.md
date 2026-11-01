@@ -82,7 +82,7 @@ Deleting a habit hides it at once and keeps its row, so Undo can bring it back a
 
 [`deploy/README.md`](deploy/README.md) describes the server kit: a hardened systemd service under its own user, and an optional pull-based auto-deploy of `main` that checks the commit signature and CI and rolls back when `/healthz` does not answer.
 
-Pushing a tag named `steady/vX.Y.Z` runs the release workflow. It builds static binaries (`CGO_ENABLED=0`) for linux and darwin on amd64 and arm64, and publishes a GitHub release with the files `steady-vX.Y.Z-<os>-<arch>` and a `SHA256SUMS` file. Each binary also gets a build provenance attestation. The attestation requires the repository to be public, so it applies once the repository is public. To verify a downloaded binary:
+Pushing a tag named `steady/vX.Y.Z` runs the release workflow. It builds static binaries (`CGO_ENABLED=0`) for linux and darwin on amd64 and arm64, and publishes a GitHub release with the files `steady-vX.Y.Z-<os>-<arch>` and a `SHA256SUMS` file. Each binary also gets a build provenance attestation. Attestations need a public repository on a personal plan: a tag pushed while the repository is private fails at the attestation step and publishes no release. To verify a downloaded binary:
 
 ```sh
 gh attestation verify steady-vX.Y.Z-linux-amd64 --repo scv3lqq/steady

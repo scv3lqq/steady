@@ -51,10 +51,11 @@ export function yearGrid(today: Date): Date[] {
   return Array.from({ length: YEAR_WEEKS * DAYS_PER_WEEK }, (_, i) => addDays(start, i));
 }
 
-// The first month that begins inside the grid, which is the month the year caption names.
+// The month of the first column's Sunday. Moving to the next month whenever the grid does not
+// start on the 1st would caption a grid that starts on 2025-11-03 as December.
 export function yearCaptionMonth(gridStart: Date): Date {
-  const monthShift = gridStart.getDate() === 1 ? 0 : 1;
-  return new Date(gridStart.getFullYear(), gridStart.getMonth() + monthShift, 1);
+  const sunday = addDays(gridStart, DAYS_PER_WEEK - 1);
+  return new Date(sunday.getFullYear(), sunday.getMonth(), 1);
 }
 
 export function streak(done: Readonly<Record<string, true>>, today: Date): number {

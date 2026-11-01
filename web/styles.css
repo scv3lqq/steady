@@ -341,10 +341,12 @@ button:focus-visible {
   height: 16px;
 }
 
-/* min-width: 0 keeps a long streak from widening the column past 84px and shifting the squares off the header. */
+/* min-width: 0 keeps a long streak from widening the column past 84px and shifting the squares off the header.
+   margin-left: auto keeps it flush right when the row wraps at 320px. */
 .side {
   flex: 0 0 84px;
   min-width: 0;
+  margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -377,10 +379,11 @@ button:focus-visible {
   color: var(--ink);
 }
 
-/* The spec's "16px/18px padding" is read as shorthand: 16px vertical, 18px horizontal. */
+/* The spec's "16px/18px padding" is read as top/bottom: side padding would inset the block from the
+   column, misalign names across views and clip long ones at 320px. */
 .block {
   border-top: 1px solid var(--line);
-  padding: 16px 18px;
+  padding: 16px 0 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;

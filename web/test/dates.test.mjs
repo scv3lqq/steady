@@ -101,6 +101,8 @@ test('yearGrid', () => {
 test('yearCaptionMonth', () => {
   const captionOf = (key) => d.yearCaptionMonth(d.fromKey(key));
   assert.equal(d.formatMonthYear(captionOf('2025-10-27')), 'November 2025');
+  // The first column's Sunday is the 9th, so this stays November (a next-month rule says December).
+  assert.equal(d.dayKey(captionOf('2025-11-03')), '2025-11-01');
   assert.equal(d.dayKey(captionOf('2025-12-01')), '2025-12-01');
   assert.equal(d.dayKey(captionOf('2025-12-29')), '2026-01-01');
 });

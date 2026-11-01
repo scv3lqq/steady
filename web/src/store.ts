@@ -106,6 +106,12 @@ export class Store {
     } catch {
       return;
     }
+    // An edit queued while the GET was in flight is missing from this snapshot: keep the local
+    // state and reload again once the queue drains.
+    if (this.#queued > 0) {
+      this.#stale = true;
+      return;
+    }
     // Names typed but not yet sent are newer than the server's copy.
     for (const [id, name] of this.#pending) {
       const habit = next.habits.find((h) => h.id === id);
@@ -253,11 +259,9 @@ export class Store {
     this.#queued -= 1;
     // Reloading earlier would overwrite optimistic edits whose requests are still queued.
     if (this.#stale && this.#queued === 0) {
-      try {
-        await this.load();
-      } finally {
-        this.#stale = false;
-      }
+      // Cleared first: load() sets it again when it discards a response that raced with an edit.
+      this.#stale = false;
+      await this.load();
     }
   }
 }

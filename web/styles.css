@@ -78,7 +78,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
 }
 
 .wordmark {
@@ -300,12 +300,13 @@ button:focus-visible {
 .name {
   flex: 1 1 140px;
   min-width: 0;
+  min-height: 32px;
   font-size: 17px;
   background: transparent;
   border: 0;
   border-bottom: 1px solid transparent;
   border-radius: 0;
-  padding: 4px 0;
+  padding: 5px 0;
   outline: none;
 }
 
@@ -340,8 +341,10 @@ button:focus-visible {
   height: 16px;
 }
 
+/* min-width: 0 keeps a long streak from widening the column past 84px and shifting the squares off the header. */
 .side {
   flex: 0 0 84px;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;

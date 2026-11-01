@@ -8,8 +8,8 @@
 #   DEPLOY_DIR: argument, else STEADY_DEPLOY_DIR, else <home of SUDO_USER>/steady-deploy.
 #   It holds this kit and bin/steady (linux/amd64).
 # Through `sudo env NAME=value ... install.sh`: AUTO_DEPLOY=on installs steady-deploy.timer
-# (autodeploy.sh, it needs DEPLOY_DIR/allowed_signers, git, curl, jq and go), AUTO_DEPLOY=off removes
-# it, unset keeps it as it is.
+# (autodeploy.sh, it needs DEPLOY_DIR/allowed_signers, git, curl, jq, go and ssh-keygen),
+# AUTO_DEPLOY=off removes it, unset keeps it as it is.
 set -euo pipefail
 
 fail() {

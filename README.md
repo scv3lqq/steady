@@ -2,6 +2,10 @@
 
 Steady is a minimal single-page habit tracker. Mark each day of a habit as done on a week, month or year view, follow the streak and today's progress, and pick one of ten accent colors. Deleting a habit shows a toast with Undo. One Go binary serves the embedded TypeScript frontend, which has no runtime dependencies, and keeps all data in one SQLite file. It is a single-user app with no authentication, see [Security](#security).
 
+## Screenshots
+
+These are made-up demo data.
+
 | Week | Month | Year |
 | --- | --- | --- |
 | ![Steady week view with the three demo habits, 600 px wide](assets/screenshots/week.png) | ![Steady month view with the three demo habits, 600 px wide](assets/screenshots/month.png) | ![Steady year view with the three demo habits, 600 px wide](assets/screenshots/year.png) |
@@ -12,7 +16,7 @@ The same page at 320 px wide, the narrowest width it reflows to:
 
 ## Quick start
 
-You need Go (the version in `go.mod` or newer).
+Requirements: Go (the version in `go.mod` or newer).
 
 ```sh
 go install github.com/scv3lqq/steady/cmd/steady@latest
@@ -25,7 +29,7 @@ From a clone, `make run` builds the frontend and starts the server with the defa
 
 ## Configuration
 
-Steady reads four environment variables. An unset or empty variable uses its default. An invalid `STEADY_ADDR` or `STEADY_LOG_LEVEL` stops the server at startup with a message that names the variable.
+Steady reads four environment variables. An unset or empty variable uses its default. An invalid `STEADY_ADDR` or `STEADY_LOG_LEVEL` stops the server at startup with a message that names the variable. [`.env.example`](.env.example) lists them with their defaults; the server does not read a `.env` file itself, so export the values in your shell or service unit.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

@@ -43,6 +43,8 @@ export class Store {
     #onChange;
     #state = { habits: [], view: 'week', accent: DEFAULT_ACCENT };
     #queue = Promise.resolve();
+    #queued = 0;
+    #stale = false;
     #timers = new Map();
     #pending = new Map();
     constructor(onChange) {
@@ -63,6 +65,13 @@ export class Store {
         }
         catch {
             return;
+        }
+        // Names typed but not yet sent are newer than the server's copy.
+        for (const [id, name] of this.#pending) {
+            const habit = next.habits.find((h) => h.id === id);
+            if (habit !== undefined) {
+                habit.name = name;
+            }
         }
         this.#state = next;
         this.#onChange();
@@ -176,19 +185,29 @@ export class Store {
     }
     #enqueue(method, path, body) {
         const init = requestInit(method, body);
+        this.#queued += 1;
         // The trailing catch keeps the chain alive: a failure in one step must not block the next.
         this.#queue = this.#queue.then(() => this.#send(path, init)).catch(() => undefined);
     }
     async #send(path, init) {
         try {
             const res = await fetch(path, init);
-            if (res.ok) {
-                return;
+            if (!res.ok) {
+                this.#stale = true;
             }
         }
         catch {
-            // A thrown fetch is treated like a non-2xx status: fall through to the reload.
+            this.#stale = true;
         }
-        await this.load();
+        this.#queued -= 1;
+        // Reloading earlier would overwrite optimistic edits whose requests are still queued.
+        if (this.#stale && this.#queued === 0) {
+            try {
+                await this.load();
+            }
+            finally {
+                this.#stale = false;
+            }
+        }
     }
 }

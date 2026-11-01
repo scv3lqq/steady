@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steady</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/dist/main.js"></script>
+</head>
+<body>
+  <main class="app" id="app">
+    <header class="header">
+      <div class="topbar">
+        <span class="wordmark">Steady</span>
+        <div class="topbar-end">
+          <span class="today" id="today"></span>
+          <button type="button" class="accent-toggle" id="accent-toggle" data-action="toggle-palette" aria-label="Accent color" aria-expanded="false" aria-controls="palette"><span class="swatch"></span></button>
+        </div>
+      </div>
+      <div class="palette" id="palette" role="radiogroup" aria-label="Accent color" hidden>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Green" data-action="accent" data-value="#4FA872"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Lime" data-action="accent" data-value="#8FBF4A"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Teal" data-action="accent" data-value="#3FB8B0"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Blue" data-action="accent" data-value="#5B8CEB"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Violet" data-action="accent" data-value="#B07FE0"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Pink" data-action="accent" data-value="#E07BB0"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Red" data-action="accent" data-value="#D96A6A"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Orange" data-action="accent" data-value="#E08A45"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Yellow" data-action="accent" data-value="#E3C24F"><span class="swatch"></span></button>
+        <button type="button" class="palette-color" role="radio" aria-checked="false" aria-label="Ivory" data-action="accent" data-value="#ECE7DC"><span class="swatch"></span></button>
+      </div>
+      <h1 class="title" id="title"></h1>
+      <div class="progress" aria-hidden="true"><div class="progress-fill" id="progress"></div></div>
+    </header>
+    <div class="controls">
+      <div class="toolbar">
+        <div class="tabs" role="tablist" aria-label="View">
+          <button type="button" class="tab" role="tab" aria-selected="false" data-action="view" data-value="week">Week</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-action="view" data-value="month">Month</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-action="view" data-value="year">Year</button>
+        </div>
+        <button type="button" class="add-toggle" data-action="show-add">+ Habit</button>
+      </div>
+      <div class="add-row" id="add-row" hidden>
+        <input class="add-input" id="add-input" type="text" maxlength="60" placeholder="Name it, press Enter" aria-label="New habit name" autocomplete="off" spellcheck="false">
+        <span class="hint">Esc to cancel</span>
+      </div>
+    </div>
+    <section class="list" id="list" aria-label="Habits"></section>
+    <footer class="footer">Tap a square or dot to mark a day. Missed one? You can still mark it later.</footer>
+    <div class="toast" id="toast" role="status" hidden>
+      <span class="toast-text" id="toast-text"></span>
+      <button type="button" class="undo" data-action="undo">Undo</button>
+    </div>
+  </main>
+</body>
+</html>

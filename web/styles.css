@@ -1,0 +1,520 @@
+:root {
+  --bg: #161513;
+  --surface: #1F1D1A;
+  --line: #2C2A26;
+  --hover: #26241F;
+  --ink: #ECE7DC;
+  --muted: #9C968A;
+  --faint: #847E72;
+  --empty: #3A3732;
+  --cell-border: #55514A;
+  --accent: #4FA872;
+}
+
+/* Flex and grid rules below set display and would otherwise override the hidden attribute. */
+[hidden] {
+  display: none !important;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Onest', system-ui, sans-serif;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* The toast is ink-colored, so the default ink ring would be invisible on it. */
+.undo:focus-visible {
+  outline-color: var(--bg);
+}
+
+.app {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 56px 20px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wordmark {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.topbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.today {
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.accent-toggle,
+.palette-color {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+}
+
+.accent-toggle .swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.palette-color .swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.palette-color[aria-checked="true"] .swatch {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--c);
+}
+
+/* One custom property per color: the CSP forbids inline style attributes. */
+.palette-color[data-value="#4FA872"] { --c: #4FA872; }
+.palette-color[data-value="#8FBF4A"] { --c: #8FBF4A; }
+.palette-color[data-value="#3FB8B0"] { --c: #3FB8B0; }
+.palette-color[data-value="#5B8CEB"] { --c: #5B8CEB; }
+.palette-color[data-value="#B07FE0"] { --c: #B07FE0; }
+.palette-color[data-value="#E07BB0"] { --c: #E07BB0; }
+.palette-color[data-value="#D96A6A"] { --c: #D96A6A; }
+.palette-color[data-value="#E08A45"] { --c: #E08A45; }
+.palette-color[data-value="#E3C24F"] { --c: #E3C24F; }
+.palette-color[data-value="#ECE7DC"] { --c: #ECE7DC; }
+
+.title {
+  margin: 0;
+  font-size: 40px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.progress {
+  height: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 3px;
+}
+
+.tab {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.tab[aria-selected="true"] {
+  background: var(--empty);
+  color: var(--ink);
+}
+
+.add-toggle {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.add-toggle:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.add-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.add-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 17px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 6px 0;
+  outline: none;
+}
+
+.add-input:focus {
+  border-bottom-color: var(--ink);
+}
+
+.add-input::placeholder {
+  color: var(--faint);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+.week-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 16px;
+  padding-bottom: 8px;
+}
+
+.name-spacer {
+  flex: 1 1 140px;
+}
+
+.side-spacer {
+  flex: 0 0 84px;
+}
+
+.days {
+  display: flex;
+  gap: 6px;
+}
+
+.wd {
+  width: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--faint);
+}
+
+.wd.is-today {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.week-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.name {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: 17px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  padding: 4px 0;
+  outline: none;
+}
+
+.name:focus {
+  border-bottom-color: var(--ink);
+}
+
+.sq {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--cell-border);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--bg);
+}
+
+.sq.is-today {
+  background: var(--surface);
+  border: 1.5px solid var(--ink);
+}
+
+/* Same specificity as .sq.is-today: keep this rule after it so done wins. */
+.sq.is-done {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.check {
+  width: 16px;
+  height: 16px;
+}
+
+.side {
+  flex: 0 0 84px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.streak {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.streak.is-zero {
+  color: var(--faint);
+}
+
+.del {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--faint);
+  font-size: 18px;
+  display: grid;
+  place-items: center;
+}
+
+.del:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* The spec's "16px/18px padding" is read as shorthand: 16px vertical, 18px horizontal. */
+.block {
+  border-top: 1px solid var(--line);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.block-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.count {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(30, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.dot {
+  min-width: 0;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--empty);
+}
+
+.dot.is-done {
+  background: var(--accent);
+}
+
+.dot.is-today {
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+
+.year-grid {
+  display: grid;
+  grid-template-columns: repeat(53, minmax(0, 1fr));
+  grid-template-rows: repeat(7, auto);
+  grid-auto-flow: column;
+  gap: 3px;
+}
+
+.cell {
+  min-width: 0;
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--empty);
+}
+
+.cell.is-done {
+  background: var(--accent);
+}
+
+.cell.is-today {
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.cell.is-future {
+  visibility: hidden;
+}
+
+.caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 17px;
+}
+
+.empty-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.footer {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 8px 8px 8px 16px;
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.toast-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.undo {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #D9D3C7;
+  color: var(--bg);
+  font-weight: 500;
+}
+
+.undo:hover {
+  background: #C9C2B5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -8,6 +8,10 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    ignore:
+      # TypeScript 7.x ships platform-specific binaries, so a lockfile generated on macOS is fragile on Linux.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

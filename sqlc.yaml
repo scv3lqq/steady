@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - engine: sqlite
+    schema: internal/repository/sqlite/migrations
+    queries: internal/repository/sqlite/queries.sql
+    gen:
+      go:
+        package: sqlcdb
+        out: internal/repository/sqlite/sqlcdb
+        emit_empty_slices: true

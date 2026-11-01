@@ -114,6 +114,19 @@ func TestOpenPragmas(t *testing.T) {
 	}
 }
 
+func TestOpenCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "data", "steady.db")
+	s, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("Open(%s) with missing parent directories: %v", path, err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+}
+
 func TestAddHabitOrderAndConflict(t *testing.T) {
 	s := newStore(t)
 	mustAdd(t, s, idA, "Alpha")
@@ -133,6 +146,11 @@ func TestAddHabitOrderAndConflict(t *testing.T) {
 	if err := s.AddHabit(t.Context(), idA, "Alpha"); !errors.Is(err, domain.ErrExists) {
 		t.Errorf("AddHabit(A again) error = %v, want %v", err, domain.ErrExists)
 	}
+
+	if err := s.RenameHabit(t.Context(), idA, "Renamed"); err != nil {
+		t.Fatalf("RenameHabit(A): %v", err)
+	}
+	assertNames(t, mustState(t, s), "after renaming A", "Renamed", "Beta")
 }
 
 func TestSoftDeleteRestoreKeepsPosition(t *testing.T) {
@@ -343,8 +361,12 @@ func TestSeedOnce(t *testing.T) {
 		t.Fatal("first SeedOnce = false, want true")
 	}
 	st := mustState(t, s)
-	assertNames(t, st, "after the first seed", domain.SeedNames()...)
+	// The names are spelled out: comparing with domain.SeedNames() would accept whatever it returns.
+	assertNames(t, st, "after the first seed", "Drink 2 L of water", "Walk 30 minutes", "Read 10 pages")
 	for _, h := range st.Habits {
+		if err := domain.ValidateID(h.ID); err != nil {
+			t.Errorf("habit %q: seeded id %q: %v", h.Name, h.ID, err)
+		}
 		if len(h.Done) == 0 {
 			t.Errorf("habit %q: Done is empty, want a year of history", h.Name)
 		}

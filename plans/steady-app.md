@@ -1360,3 +1360,4 @@ These supersede the matching text above.
 - T22 note: with the empty add row open, the first mouse click elsewhere only closes the row (blur hides it and
   the layout shifts), so close the row before clicking a day. Chrome at DPR 1 reports a 1.5px border as 1px, so
   check the today square's border color rather than its used width.
+- T15 additions from review: `TestAddHabitOrderAndConflict` also renames A to `Renamed` and reads it back from `State`; `TestSeedOnce` compares names with the literal list `Drink 2 L of water`, `Walk 30 minutes`, `Read 10 pages` and asserts `domain.ValidateID(h.ID) == nil` for each seeded habit; new `TestOpenCreatesParentDir` opens `filepath.Join(t.TempDir(), "nested", "data", "steady.db")`. The S3 mutation is caught by the fresh-store scenario, not by D colliding with B.

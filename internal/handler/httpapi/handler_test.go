@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +47,8 @@ func staticFiles() fstest.MapFS {
 		"index.html":   {Data: []byte(indexHTML)},
 		"styles.css":   {Data: []byte(stylesCSS)},
 		"dist/main.js": {Data: []byte(mainJS)},
+		// In the filesystem but not matched by dist/*.js, so it is never read at startup and must never be served.
+		"dist/notes.txt": {Data: []byte("not a script")},
 	}
 }
 
@@ -59,6 +63,12 @@ type server struct {
 
 func newServer(t *testing.T, opts Options) *server {
 	t.Helper()
+	return newLoggedServer(t, opts, zerolog.Nop())
+}
+
+// newLoggedServer is newServer with the HTTP handler logging to log; the service stays quiet.
+func newLoggedServer(t *testing.T, opts Options, log zerolog.Logger) *server {
+	t.Helper()
 	store, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "steady.db"))
 	if err != nil {
 		t.Fatalf("sqlite.Open: %v", err)
@@ -70,7 +80,7 @@ func newServer(t *testing.T, opts Options) *server {
 		}
 	})
 	svc := usecase.New(store, fixedNow, zerolog.Nop())
-	h, err := New(svc, staticFiles(), opts, zerolog.Nop())
+	h, err := New(svc, staticFiles(), opts, log)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -99,6 +109,8 @@ func request(t *testing.T, method, path, body string) *http.Request {
 	return req
 }
 
+// assertResponse compares the status and the body. Every body this API writes is JSON and a 204 has none, so a
+// non-empty wantBody also has to come with Content-Type: application/json.
 func assertResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantBody string) {
 	t.Helper()
 	got := strings.TrimSpace(rec.Body.String())
@@ -107,6 +119,12 @@ func assertResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int
 	}
 	if got != wantBody {
 		t.Errorf("body = %q, want %q", got, wantBody)
+	}
+	if wantBody == "" {
+		return
+	}
+	if gotType := rec.Header().Get("Content-Type"); gotType != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", gotType, "application/json")
 	}
 }
 
@@ -460,6 +478,48 @@ func TestHealthzDown(t *testing.T) {
 	assertResponse(t, rec, http.StatusServiceUnavailable, `{"error":"database unavailable"}`)
 }
 
+func TestInternalError(t *testing.T) {
+	var logs bytes.Buffer
+	srv := newLoggedServer(t, Options{AllowedHosts: []string{allowedHost}}, zerolog.New(&logs))
+	if err := srv.store.Close(); err != nil {
+		t.Fatalf("store.Close: %v", err)
+	}
+	// The error the handler is about to hit, so the test can look for its text in the response and in the log.
+	_, cause := srv.store.State(t.Context())
+	if cause == nil {
+		t.Fatal("State on a closed store succeeded")
+	}
+
+	rec := srv.do(request(t, http.MethodGet, "/api/state", ""))
+
+	assertResponse(t, rec, http.StatusInternalServerError, `{"error":"internal error"}`)
+	if strings.Contains(rec.Body.String(), cause.Error()) {
+		t.Errorf("body %q leaks the error text %q", rec.Body.String(), cause.Error())
+	}
+	// Decoding the whole output as one object also fails on a second log line.
+	var entry struct {
+		Level  string `json:"level"`
+		Error  string `json:"error"`
+		Method string `json:"method"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("log output %q is not exactly one JSON object: %v", logs.String(), err)
+	}
+	if entry.Level != "error" {
+		t.Errorf("log level = %q, want %q", entry.Level, "error")
+	}
+	if entry.Method != http.MethodGet {
+		t.Errorf("log method = %q, want %q", entry.Method, http.MethodGet)
+	}
+	if entry.Path != "/api/state" {
+		t.Errorf("log path = %q, want %q", entry.Path, "/api/state")
+	}
+	if !strings.Contains(entry.Error, cause.Error()) {
+		t.Errorf("log error = %q, want it to contain %q", entry.Error, cause.Error())
+	}
+}
+
 func TestStatic(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -497,6 +557,11 @@ func TestStatic(t *testing.T) {
 		{
 			name:       "dist directory is not listed",
 			path:       "/dist/",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "file in dist that is not a script",
+			path:       "/dist/notes.txt",
 			wantStatus: http.StatusNotFound,
 		},
 		{

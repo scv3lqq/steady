@@ -26,6 +26,8 @@ Each is a command with an observable result. Run from the repo root.
 | A11 | `grep -F "'steady/v*'" .github/workflows/release.yml && grep -F 'attest' .github/workflows/release.yml` | both hit |
 | A12 | after push of `main`: `gh run list --branch main --workflow ci.yml --limit 1 --json conclusion,headSha -q '.[0]'` | `conclusion` is `success` and `headSha` equals `git rev-parse main` |
 
+In A3, A4 and A9 the `\|` is a Markdown table escape: run it as a plain `|`.
+
 Base result (recorded on `98d26e3` before any task): A1 fails (no Makefile), A2 to A11 fail (files absent),
 A12 n/a. No tracked file on the base contains a literal em dash (checked with the S2 snippet), so A5 is a
 whole-repo check with base count 0.
@@ -1361,3 +1363,5 @@ These supersede the matching text above.
   the layout shifts), so close the row before clicking a day. Chrome at DPR 1 reports a 1.5px border as 1px, so
   check the today square's border color rather than its used width.
 - T15 additions from review: `TestAddHabitOrderAndConflict` also renames A to `Renamed` and reads it back from `State`; `TestSeedOnce` compares names with the literal list `Drink 2 L of water`, `Walk 30 minutes`, `Read 10 pages` and asserts `domain.ValidateID(h.ID) == nil` for each seeded habit; new `TestOpenCreatesParentDir` opens `filepath.Join(t.TempDir(), "nested", "data", "steady.db")`. The S3 mutation is caught by the fresh-store scenario, not by D colliding with B.
+- T20 additions from review: the restart step in `TestNewServesSeededApp` compares habit ids (random at seed time) with the first start's ids, proving the same database is reopened; new `TestHostAllowlistFromConfig` with `ExtraHosts: []string{"steady.test"}`: Host `steady.test` gives 200, `other.test` gives 403.
+- T18 additions from review: a closed-store `GET /api/state` case expects 500 `{"error":"internal error"}`, with a `zerolog.New(&buf)` logger asserting level `error`, `method`, `path`, and that the response does not contain the error text; rows expecting a JSON body also assert `Content-Type: application/json`; `TestStatic` adds `dist/notes.txt` to the MapFS and expects `GET /dist/notes.txt` 404.

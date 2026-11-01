@@ -34,26 +34,27 @@ func startApp(t *testing.T, cfg config.Config) *App {
 	return a
 }
 
-// get serves GET path through the handler of a, as a browser on the loopback address would send it.
-func get(t *testing.T, a *App, path string) *httptest.ResponseRecorder {
+// get serves GET path through the handler of a, as a browser that reached the app under host would send it.
+func get(t *testing.T, a *App, host, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
-	req.Host = loopbackHost
+	req.Host = host
 	rec := httptest.NewRecorder()
 	a.Handler().ServeHTTP(rec, req)
 	return rec
 }
 
 // assertSeededHabits stops the test unless GET /api/state lists the three demo habits in the order of
-// domain.SeedNames. step says which start of the app is checked.
-func assertSeededHabits(t *testing.T, a *App, step string) {
+// domain.SeedNames, and returns their ids. step says which start of the app is checked.
+func assertSeededHabits(t *testing.T, a *App, step string) []string {
 	t.Helper()
-	rec := get(t, a, "/api/state")
+	rec := get(t, a, loopbackHost, "/api/state")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%s: GET /api/state status = %d, want %d (body %q)", step, rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var state struct {
 		Habits []struct {
+			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"habits"`
 	}
@@ -63,13 +64,16 @@ func assertSeededHabits(t *testing.T, a *App, step string) {
 	if len(state.Habits) != 3 {
 		t.Fatalf("%s: GET /api/state lists %d habits, want 3", step, len(state.Habits))
 	}
-	got := make([]string, 0, len(state.Habits))
+	ids := make([]string, 0, len(state.Habits))
+	names := make([]string, 0, len(state.Habits))
 	for _, h := range state.Habits {
-		got = append(got, h.Name)
+		ids = append(ids, h.ID)
+		names = append(names, h.Name)
 	}
-	if want := domain.SeedNames(); !slices.Equal(got, want) {
-		t.Errorf("%s: habit names = %q, want %q", step, got, want)
+	if want := domain.SeedNames(); !slices.Equal(names, want) {
+		t.Errorf("%s: habit names = %q, want %q", step, names, want)
 	}
+	return ids
 }
 
 func TestNewServesSeededApp(t *testing.T) {
@@ -95,7 +99,7 @@ func TestNewServesSeededApp(t *testing.T) {
 	}
 	for _, tc := range pages {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := get(t, first, tc.path)
+			rec := get(t, first, loopbackHost, tc.path)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("GET %s status = %d, want %d", tc.path, rec.Code, http.StatusOK)
 			}
@@ -104,11 +108,43 @@ func TestNewServesSeededApp(t *testing.T) {
 			}
 		})
 	}
-	assertSeededHabits(t, first, "first start")
+	firstIDs := assertSeededHabits(t, first, "first start")
 
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	// The seeded marker lives in the database file, so a start on the same file must not add a second set.
-	assertSeededHabits(t, startApp(t, cfg), "restart")
+	// The seeded marker lives in the database file, so a start on the same file must not add a second set. The ids
+	// are random per seeding, so the same ids show that the restart reopened that file instead of seeding another.
+	restartIDs := assertSeededHabits(t, startApp(t, cfg), "restart")
+	if !slices.Equal(restartIDs, firstIDs) {
+		t.Errorf("restart: habit ids = %q, want the ids of the first start %q", restartIDs, firstIDs)
+	}
+}
+
+// The wiring is where the config meets the Host allowlist, so a dropped option shows up here and not in the
+// handler tests.
+func TestHostAllowlistFromConfig(t *testing.T) {
+	cfg := config.Config{
+		Addr:       loopbackHost,
+		DBPath:     filepath.Join(t.TempDir(), "steady.db"),
+		LogLevel:   zerolog.Disabled,
+		ExtraHosts: []string{"steady.test"},
+	}
+	a := startApp(t, cfg)
+
+	tests := []struct {
+		name string
+		host string
+		want int
+	}{
+		{name: "host from the config", host: "steady.test", want: http.StatusOK},
+		{name: "host not in the config", host: "other.test", want: http.StatusForbidden},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if rec := get(t, a, tc.host, "/healthz"); rec.Code != tc.want {
+				t.Errorf("GET /healthz with Host %s: status = %d, want %d", tc.host, rec.Code, tc.want)
+			}
+		})
+	}
 }

@@ -1,0 +1,47 @@
+# Installed by install.sh from the deploy kit, which fills in the deploy dir below.
+[Unit]
+Description=steady: single-page habit tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=steady
+Group=steady
+EnvironmentFile=/etc/steady/env
+WorkingDirectory=/var/lib/steady
+# The SQLite file and its -wal and -shm files live here, the only writable path.
+StateDirectory=steady
+StateDirectoryMode=0700
+UMask=0077
+# Takes the binary staged in the deploy dir, so an update is a file swap plus a restart.
+ExecStartPre=-+/usr/bin/install -C -o root -g root -m 0755 @DEPLOY_DIR@/bin/steady /usr/local/bin/steady
+ExecStart=/usr/local/bin/steady
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Go does not JIT, so no memory needs to be writable and executable at once.
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

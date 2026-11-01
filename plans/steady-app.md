@@ -491,7 +491,6 @@ export function weekdayShort(d: Date): string;            // en-US {weekday:'sho
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/dist/main.js"></script>
 </head>
@@ -1338,3 +1337,26 @@ are wider than 0 bytes.
 - No dependabot config (not requested).
 - No TypeScript lint tool besides `tsc --strict`; no bundler; TypeScript 7.x not used (S1).
 - No `-race` with `CGO_ENABLED=0`; binaries only are cgo-free.
+
+## Iteration 1: review fixes (non-blocking findings folded in)
+
+These supersede the matching text above.
+
+- T6 CSS values changed by review: `.topbar { gap: 6px; }`, `.name { padding: 5px 0; min-height: 32px; }`,
+  `.side { min-width: 0; }` (a 10+ day streak no longer misaligns squares; the longest dates fit at 320 px; 32 px hit target).
+- F1 (`web/src/store.ts`, `web/dist/store.js`): a failed request must not wipe later optimistic edits or an
+  unsent rename. `#enqueue` counts queued requests; a failure sets `#stale = true` and reloads only when the
+  queue has drained (`#queued === 0`), then clears `#stale`. `load()` re-applies `#pending` names to the
+  matching habits before it replaces `#state`. Gates: `(cd web && npm run build)`, S2, and a scratch run with a
+  fake `fetch`: toggle day A (500), toggle day B while A is in flight -> requests `PUT A, PUT B, GET state` in
+  that order; a rename pending during a reload keeps the typed name locally.
+- F2 (`web/index.html`, `web/src/main.ts`, `web/dist/main.js`): the Google Fonts stylesheet is added from
+  `start()` with `document.createElement('link')` (`rel=stylesheet`, the same href:
+  `https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap`) and `document.head.append`,
+  before `store.load()`. Why: a parser-inserted stylesheet blocks the module script until the font host answers
+  (measured 3.3 s here), and a blocked host would leave the page blank until the connection times out. The S13
+  block above is updated: the two preconnect links stay, the stylesheet link is gone. The CSP is unchanged.
+  Gates: the T6 awk diff of `index.html`, `(cd web && npm run build)`, the T13 forbidden-API grep, S2.
+- T22 note: with the empty add row open, the first mouse click elsewhere only closes the row (blur hides it and
+  the layout shifts), so close the row before clicking a day. Chrome at DPR 1 reports a 1.5px border as 1px, so
+  check the today square's border color rather than its used width.

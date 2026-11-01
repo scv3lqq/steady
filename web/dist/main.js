@@ -3,6 +3,7 @@ import { Store } from './store.js';
 const TOAST_MS = 5000;
 const NAME_INPUT = 'input.name';
 const ADD_INPUT = '#add-input';
+const FONTS_URL = 'https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&display=swap';
 function isView(value) {
     return value === 'week' || value === 'month' || value === 'year';
 }
@@ -132,6 +133,11 @@ function start() {
         }
     });
     window.addEventListener('pagehide', () => store.flushPending());
+    // Not in index.html: a stylesheet link in <head> holds this module until the font host answers.
+    const fonts = document.createElement('link');
+    fonts.rel = 'stylesheet';
+    fonts.href = FONTS_URL;
+    document.head.append(fonts);
     void store.load();
 }
 start();

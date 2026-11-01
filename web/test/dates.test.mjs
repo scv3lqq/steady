@@ -62,6 +62,11 @@ test('lastNDays', () => {
   assert.equal(month.at(-1).getHours(), 0);
 
   assert.equal(d.dayKey(d.lastNDays(today, 7)[0]), '2026-10-26');
+
+  // The window spans the 2026-03-08 spring-forward day.
+  const spring = d.lastNDays(new Date(2026, 2, 20), 30);
+  assert.equal(d.dayKey(spring[0]), '2026-02-19');
+  assert.equal(d.dayKey(spring.at(-1)), '2026-03-20');
 });
 
 test('mondayOf', () => {
@@ -110,7 +115,9 @@ test('streak', () => {
     { today: nov1, keys: [], want: 0 },
     { today: nov1, keys: ['2026-10-30'], want: 0 },
     { today: nov1, keys: ['2026-10-29', '2026-10-31', '2026-11-01'], want: 2 },
+    // Both rows walk back over a DST change: fall back on 11-01, spring forward on 03-08.
     { today: new Date(2026, 10, 2), keys: ['2026-10-31', '2026-11-01', '2026-11-02'], want: 3 },
+    { today: new Date(2026, 2, 9), keys: ['2026-03-07', '2026-03-08', '2026-03-09'], want: 3 },
   ];
   for (const { today, keys, want } of cases) {
     assert.equal(d.streak(doneOn(...keys), today), want, `${d.dayKey(today)} [${keys}]`);

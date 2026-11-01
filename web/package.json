@@ -8,6 +8,6 @@
     "test": "TZ=America/New_York node --test test/dates.test.mjs"
   },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }

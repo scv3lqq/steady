@@ -19,8 +19,31 @@ function start(): void {
   let toastTimer: number | undefined;
 
   // The store calls draw on every change, and draw reads the store only when it runs.
-  const draw = (): void => render(root, store.state, ui, new Date());
+  const draw = (): void => {
+    if (store.auth.status !== 'authenticated') {
+      clearTimeout(toastTimer);
+      ui.toast = null;
+      ui.paletteOpen = false;
+      ui.adding = false;
+      const addInput = root.querySelector<HTMLInputElement>(ADD_INPUT);
+      if (addInput !== null) addInput.value = '';
+    }
+    render(root, store.state, ui, new Date(), store.auth);
+  };
   const store = new Store(draw);
+  draw();
+
+  root.addEventListener('submit', (event) => {
+    if (!(event.target instanceof HTMLFormElement) || event.target.id !== 'login-form') return;
+    event.preventDefault();
+    if (store.auth.busy) return;
+    const username = event.target.querySelector<HTMLInputElement>('#username');
+    const password = event.target.querySelector<HTMLInputElement>('#password');
+    if (username === null || password === null) return;
+    const secret = password.value;
+    password.value = '';
+    void store.login(username.value, secret);
+  });
 
   const dismissToast = (): void => {
     clearTimeout(toastTimer);
@@ -64,6 +87,11 @@ function start(): void {
       return;
     }
     const { action, id, date, value } = el.dataset;
+    if (action === 'logout') {
+      void store.logout();
+      return;
+    }
+    if (store.auth.status !== 'authenticated') return;
     switch (action) {
       case 'toggle-palette':
         ui.paletteOpen = !ui.paletteOpen;

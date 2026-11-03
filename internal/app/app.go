@@ -3,9 +3,7 @@ package app
 
 import (
 	"context"
-	crand "crypto/rand"
 	"fmt"
-	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -13,6 +11,7 @@ import (
 
 	"github.com/scv3lqq/steady/internal/config"
 	"github.com/scv3lqq/steady/internal/handler/httpapi"
+	"github.com/scv3lqq/steady/internal/password"
 	"github.com/scv3lqq/steady/internal/repository/sqlite"
 	"github.com/scv3lqq/steady/internal/usecase"
 	"github.com/scv3lqq/steady/web"
@@ -28,7 +27,7 @@ type App struct {
 	store   *sqlite.Store
 }
 
-// New opens the database, seeds the demo habits on a first run, purges the deleted habits that are past their undo
+// New opens the database, purges the deleted habits that are past their undo
 // window and builds the HTTP handler. The caller must Close the App.
 func New(ctx context.Context, cfg config.Config, log zerolog.Logger) (*App, error) {
 	store, err := sqlite.Open(ctx, cfg.DBPath)
@@ -46,19 +45,6 @@ func New(ctx context.Context, cfg config.Config, log zerolog.Logger) (*App, erro
 
 // wire prepares the data in store and puts the HTTP handler on top of it.
 func wire(ctx context.Context, store *sqlite.Store, cfg config.Config, log zerolog.Logger) (http.Handler, error) {
-	// The demo history is drawn from a generator seeded by the OS, so no two installs share one.
-	var seed [32]byte
-	if _, err := crand.Read(seed[:]); err != nil {
-		return nil, fmt.Errorf("read random seed: %w", err)
-	}
-	rng := rand.New(rand.NewChaCha8(seed)) //nolint:gosec // demo data only, nothing secret is drawn from it
-	seeded, err := store.SeedOnce(ctx, time.Now(), rng)
-	if err != nil {
-		return nil, fmt.Errorf("seed demo habits: %w", err)
-	}
-	if seeded {
-		log.Info().Msg("seeded demo habits")
-	}
 
 	svc := usecase.New(store, time.Now, log)
 	purged, err := svc.Purge(ctx)
@@ -69,7 +55,11 @@ func wire(ctx context.Context, store *sqlite.Store, cfg config.Config, log zerol
 		log.Info().Int64("count", purged).Msg("purged deleted habits")
 	}
 
-	handler, err := httpapi.New(svc, web.FS, httpapi.Options{AllowedHosts: cfg.AllowedHosts()}, log)
+	accounts, err := usecase.NewAccounts(store, password.Hasher{}, time.Now)
+	if err != nil {
+		return nil, fmt.Errorf("build accounts: %w", err)
+	}
+	handler, err := httpapi.New(svc, web.FS, httpapi.Options{AllowedHosts: cfg.AllowedHosts(), Accounts: accounts, CookieSecure: cfg.CookieSecure}, log)
 	if err != nil {
 		return nil, fmt.Errorf("build handler: %w", err)
 	}

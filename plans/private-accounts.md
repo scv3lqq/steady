@@ -112,7 +112,8 @@ Resolve maintained dependency versions through the Go module proxy and commit su
 - `STEADY_COOKIE_SECURE` boolean defaults true, parsed with strict true/false only.
   HTTPS reverse proxy deployment requires true, irrespective of backend HTTP;
   never infer it from untrusted forwarding headers. Explicit false supports local
-  loopback HTTP or SSH tunnel only. Keep listener loopback even with auth.
+  loopback HTTP or SSH tunnel only. Operator must keep listener loopback even with
+  auth; preserve existing address-parser acceptance and its regression coverage.
 - Host validation, CrossOriginProtection and no-store cover login/logout/session
   and protected APIs. Preserve existing body limits, JSON strictness and security
   headers. `/healthz` and static assets remain public and contain no private data.
@@ -366,3 +367,21 @@ Public registration, remote account provisioning, invitations, admin UI, email,
 OAuth, recovery flows, additional tracker features, new infrastructure or frontend
 runtime dependencies, live database modification, deployment, main merge, force
 push or history rewriting. No weakening signing, CI or permission boundaries.
+
+## Resolved implementation-local seams
+
+T2 password adapter is `password.Hasher{}`. CLI uses
+`passwordReader.ReadPassword(prompt string) ([]byte,error)` and
+`runAccount(ctx context.Context,args []string,cfg config.Config,reader passwordReader,output io.Writer) error`.
+The args slice contains the verb and username after the `account` dispatcher;
+validate verb/count before prompting. Production reader refuses non-terminal input.
+Limiter helper: `newLoginLimiter(now func()time.Time) *loginLimiter` with
+`allow(remoteAddr string) bool`, `acquire() bool`, `release()`.
+Session tests also inspect storage to prove token plaintext is absent and expired
+sessions are removed during insert. These close local seams without changing the
+public cross-task contracts.
+
+T2 limiter bounded-map fixture uses private `loginLimiter.ips map[string]loginWindow`
+and `loginWindow{started time.Time,attempts int}`. Directly populate live windows
+to exercise fail-closed capacity: the global quota otherwise bounds naturally
+reachable live entries below 1024. This is a resource-bound test seam.

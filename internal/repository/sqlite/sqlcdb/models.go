@@ -8,11 +8,18 @@ import (
 	"database/sql"
 )
 
+type BootstrapLedger struct {
+	Singleton int64
+	Username  string
+}
+
 type Habit struct {
-	ID        string
-	Name      string
-	Position  int64
-	DeletedAt sql.NullInt64
+	ID              string
+	Name            string
+	Position        int64
+	DeletedAt       sql.NullInt64
+	UserID          sql.NullString
+	LegacyPreserved int64
 }
 
 type HabitDay struct {
@@ -20,7 +27,25 @@ type HabitDay struct {
 	Day     string
 }
 
-type Setting struct {
+type LegacySetting struct {
 	Key   string
 	Value string
+}
+
+type Session struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt int64
+}
+
+type Setting struct {
+	UserID string
+	Key    string
+	Value  string
+}
+
+type User struct {
+	ID           string
+	Username     string
+	PasswordHash string
 }

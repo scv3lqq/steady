@@ -74,8 +74,84 @@ button:focus-visible {
   gap: 20px;
 }
 
+.tracker {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.auth-shell,
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auth-shell {
+  gap: 36px;
+}
+
+.login-form label,
+.session-check {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.session-check,
+.auth-error {
+  margin: 0;
+}
+
+.login-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.login-form input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.login-submit {
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.auth-error {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.logout {
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.logout:hover,
+.login-submit:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -88,6 +164,7 @@ button:focus-visible {
 
 .topbar-end {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }

@@ -27,28 +27,28 @@ type fakeRepo struct {
 	purgeErr  error // returned by PurgeDeleted
 }
 
-func (r *fakeRepo) State(_ context.Context) (domain.State, error) {
-	r.calls = append(r.calls, "State()")
+func (r *fakeRepo) State(_ context.Context, userID string) (domain.State, error) {
+	r.calls = append(r.calls, fmt.Sprintf("State(%q)", userID))
 	return domain.State{}, nil
 }
 
-func (r *fakeRepo) AddHabit(_ context.Context, id, name string) error {
-	r.calls = append(r.calls, fmt.Sprintf("AddHabit(%q, %q)", id, name))
+func (r *fakeRepo) AddHabit(_ context.Context, userID string, id, name string) error {
+	r.calls = append(r.calls, fmt.Sprintf("AddHabit(%q, %q, %q)", userID, id, name))
 	return nil
 }
 
-func (r *fakeRepo) RenameHabit(_ context.Context, id, name string) error {
-	r.calls = append(r.calls, fmt.Sprintf("RenameHabit(%q, %q)", id, name))
+func (r *fakeRepo) RenameHabit(_ context.Context, userID string, id, name string) error {
+	r.calls = append(r.calls, fmt.Sprintf("RenameHabit(%q, %q, %q)", userID, id, name))
 	return nil
 }
 
-func (r *fakeRepo) DeleteHabit(_ context.Context, id string, at time.Time) error {
-	r.calls = append(r.calls, fmt.Sprintf("DeleteHabit(%q, %s)", id, stamp(at)))
+func (r *fakeRepo) DeleteHabit(_ context.Context, userID string, id string, at time.Time) error {
+	r.calls = append(r.calls, fmt.Sprintf("DeleteHabit(%q, %q, %s)", userID, id, stamp(at)))
 	return r.deleteErr
 }
 
-func (r *fakeRepo) RestoreHabit(_ context.Context, id string) error {
-	r.calls = append(r.calls, fmt.Sprintf("RestoreHabit(%q)", id))
+func (r *fakeRepo) RestoreHabit(_ context.Context, userID string, id string) error {
+	r.calls = append(r.calls, fmt.Sprintf("RestoreHabit(%q, %q)", userID, id))
 	return nil
 }
 
@@ -57,13 +57,13 @@ func (r *fakeRepo) PurgeDeleted(_ context.Context, before time.Time) (int64, err
 	return 0, r.purgeErr
 }
 
-func (r *fakeRepo) SetDay(_ context.Context, id, day string, done bool) error {
-	r.calls = append(r.calls, fmt.Sprintf("SetDay(%q, %q, %t)", id, day, done))
+func (r *fakeRepo) SetDay(_ context.Context, userID string, id, day string, done bool) error {
+	r.calls = append(r.calls, fmt.Sprintf("SetDay(%q, %q, %q, %t)", userID, id, day, done))
 	return nil
 }
 
-func (r *fakeRepo) UpdateSettings(_ context.Context, u domain.SettingsUpdate) error {
-	r.calls = append(r.calls, fmt.Sprintf("UpdateSettings(view=%s, accent=%s)", show(u.View), show(u.Accent)))
+func (r *fakeRepo) UpdateSettings(_ context.Context, userID string, u domain.SettingsUpdate) error {
+	r.calls = append(r.calls, fmt.Sprintf("UpdateSettings(%q, view=%s, accent=%s)", userID, show(u.View), show(u.Accent)))
 	return nil
 }
 
@@ -120,14 +120,14 @@ func TestAddHabit(t *testing.T) {
 			id:        testID,
 			habitName: "  Read ",
 			want:      domain.Habit{ID: testID, Name: "Read", Done: []string{}},
-			wantCalls: []string{`AddHabit("0f8fad5b-d9cb-469f-a165-70867728950e", "Read")`},
+			wantCalls: []string{`AddHabit("owner-a", "0f8fad5b-d9cb-469f-a165-70867728950e", "Read")`},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeRepo{}
 
-			got, err := newService(repo).AddHabit(t.Context(), tc.id, tc.habitName)
+			got, err := newService(repo).AddHabit(t.Context(), "owner-a", tc.id, tc.habitName)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("AddHabit(%q, %q) error = %v, want %v", tc.id, tc.habitName, err, tc.wantErr)
@@ -155,14 +155,14 @@ func TestRenameHabit(t *testing.T) {
 		{
 			name:      "empty name becomes Untitled",
 			newName:   new(""),
-			wantCalls: []string{`RenameHabit("0f8fad5b-d9cb-469f-a165-70867728950e", "Untitled")`},
+			wantCalls: []string{`RenameHabit("owner-a", "0f8fad5b-d9cb-469f-a165-70867728950e", "Untitled")`},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeRepo{}
 
-			_, err := newService(repo).RenameHabit(t.Context(), testID, tc.newName)
+			_, err := newService(repo).RenameHabit(t.Context(), "owner-a", testID, tc.newName)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("RenameHabit(%q, %s) error = %v, want %v", testID, show(tc.newName), err, tc.wantErr)
@@ -174,7 +174,7 @@ func TestRenameHabit(t *testing.T) {
 
 func TestDeleteHabit(t *testing.T) {
 	const (
-		deleted = `DeleteHabit("0f8fad5b-d9cb-469f-a165-70867728950e", 2026-11-01T12:00:00Z)`
+		deleted = `DeleteHabit("owner-a", "0f8fad5b-d9cb-469f-a165-70867728950e", 2026-11-01T12:00:00Z)`
 		purged  = `PurgeDeleted(2026-10-31T12:00:00Z)`
 	)
 	tests := []struct {
@@ -204,7 +204,7 @@ func TestDeleteHabit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeRepo{deleteErr: tc.deleteErr, purgeErr: tc.purgeErr}
 
-			err := newService(repo).DeleteHabit(t.Context(), testID)
+			err := newService(repo).DeleteHabit(t.Context(), "owner-a", testID)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("DeleteHabit(%q) error = %v, want %v", testID, err, tc.wantErr)
@@ -231,7 +231,7 @@ func TestSetDay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeRepo{}
 
-			err := newService(repo).SetDay(t.Context(), testID, tc.day, true)
+			err := newService(repo).SetDay(t.Context(), "owner-a", testID, tc.day, true)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("SetDay(%q, %q, true) error = %v, want %v", testID, tc.day, err, tc.wantErr)
@@ -256,14 +256,14 @@ func TestUpdateSettings(t *testing.T) {
 		{
 			name:      "view only leaves the accent alone",
 			view:      new("year"),
-			wantCalls: []string{`UpdateSettings(view="year", accent=nil)`},
+			wantCalls: []string{`UpdateSettings("owner-a", view="year", accent=nil)`},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeRepo{}
 
-			err := newService(repo).UpdateSettings(t.Context(), tc.view, tc.accent)
+			err := newService(repo).UpdateSettings(t.Context(), "owner-a", tc.view, tc.accent)
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Errorf("UpdateSettings(%s, %s) error = %v, want %v", show(tc.view), show(tc.accent), err, tc.wantErr)
@@ -281,4 +281,23 @@ func TestPurge(t *testing.T) {
 	}
 
 	checkCalls(t, repo.calls, []string{`PurgeDeleted(2026-10-31T12:00:00Z)`})
+}
+
+func TestExplicitOwnerForwarding(t *testing.T) {
+	repo := &fakeRepo{}
+	service := newService(repo)
+	if _, err := service.State(t.Context(), "owner-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RestoreHabit(t.Context(), "owner-b", testID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetDay(t.Context(), "owner-b", testID, "2026-11-01", true); err != nil {
+		t.Fatal(err)
+	}
+	checkCalls(t, repo.calls, []string{
+		`State("owner-b")`,
+		`RestoreHabit("owner-b", "0f8fad5b-d9cb-469f-a165-70867728950e")`,
+		`SetDay("owner-b", "0f8fad5b-d9cb-469f-a165-70867728950e", "2026-11-01", true)`,
+	})
 }

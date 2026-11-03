@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -34,6 +35,8 @@ const (
 type Options struct {
 	// AllowedHosts are the Host header values accepted besides the loopback names. An entry with a port must
 	// equal the whole header; an entry without one matches that hostname on any port.
+	Accounts     *usecase.Accounts
+	CookieSecure bool
 	AllowedHosts []string
 }
 
@@ -95,15 +98,21 @@ func (a asset) serve(w http.ResponseWriter, _ *http.Request) {
 
 // handler holds what the route handlers share.
 type handler struct {
-	svc     *usecase.Service
-	log     zerolog.Logger
-	scripts map[string]asset // dist/*.js by file name
+	accounts     *usecase.Accounts
+	cookieSecure bool
+	limiter      *loginLimiter
+	svc          *usecase.Service
+	log          zerolog.Logger
+	scripts      map[string]asset // dist/*.js by file name
 }
 
 // New returns the HTTP handler of Steady: the JSON API over svc and the files of static, behind the security
 // headers, the Host allowlist and the cross-origin check. static holds index.html, styles.css and dist/*.js at its
 // root; New reads them into memory, so nothing else in static is ever served.
 func New(svc *usecase.Service, static fs.FS, opts Options, log zerolog.Logger) (http.Handler, error) {
+	if opts.Accounts == nil {
+		return nil, fmt.Errorf("httpapi: accounts required")
+	}
 	index, err := readAsset(static, "index.html", typeHTML)
 	if err != nil {
 		return nil, err
@@ -125,19 +134,22 @@ func New(svc *usecase.Service, static fs.FS, opts Options, log zerolog.Logger) (
 		scripts[path.Base(name)] = script
 	}
 
-	h := &handler{svc: svc, log: log, scripts: scripts}
+	h := &handler{svc: svc, log: log, scripts: scripts, accounts: opts.Accounts, cookieSecure: opts.CookieSecure, limiter: newLoginLimiter(time.Now)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", index.serve)
 	mux.HandleFunc("GET /styles.css", styles.serve)
 	mux.HandleFunc("GET /dist/{file}", h.script)
-	mux.HandleFunc("GET /api/state", h.state)
-	mux.HandleFunc("POST /api/habits", h.createHabit)
-	mux.HandleFunc("PATCH /api/habits/{id}", h.renameHabit)
-	mux.HandleFunc("DELETE /api/habits/{id}", h.deleteHabit)
-	mux.HandleFunc("POST /api/habits/{id}/restore", h.restoreHabit)
-	mux.HandleFunc("PUT /api/habits/{id}/days/{day}", h.setDay(true))
-	mux.HandleFunc("DELETE /api/habits/{id}/days/{day}", h.setDay(false))
-	mux.HandleFunc("PUT /api/settings", h.updateSettings)
+	mux.HandleFunc("POST /api/login", h.login)
+	mux.HandleFunc("GET /api/session", h.session)
+	mux.HandleFunc("POST /api/logout", h.logout)
+	mux.HandleFunc("GET /api/state", h.private(h.state))
+	mux.HandleFunc("POST /api/habits", h.private(h.createHabit))
+	mux.HandleFunc("PATCH /api/habits/{id}", h.private(h.renameHabit))
+	mux.HandleFunc("DELETE /api/habits/{id}", h.private(h.deleteHabit))
+	mux.HandleFunc("POST /api/habits/{id}/restore", h.private(h.restoreHabit))
+	mux.HandleFunc("PUT /api/habits/{id}/days/{day}", h.private(h.setDay(true)))
+	mux.HandleFunc("DELETE /api/habits/{id}/days/{day}", h.private(h.setDay(false)))
+	mux.HandleFunc("PUT /api/settings", h.private(h.updateSettings))
 	mux.HandleFunc("GET /healthz", h.healthz)
 	return secureHeaders(allowHosts(opts.AllowedHosts, crossOrigin(mux))), nil
 }
@@ -161,7 +173,7 @@ func (h *handler) script(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) state(w http.ResponseWriter, r *http.Request) {
-	st, err := h.svc.State(r.Context())
+	st, err := h.svc.State(r.Context(), requestUser(r))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -175,7 +187,7 @@ func (h *handler) createHabit(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	habit, err := h.svc.AddHabit(r.Context(), req.ID, req.Name)
+	habit, err := h.svc.AddHabit(r.Context(), requestUser(r), req.ID, req.Name)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -189,7 +201,7 @@ func (h *handler) renameHabit(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	habit, err := h.svc.RenameHabit(r.Context(), r.PathValue("id"), req.Name)
+	habit, err := h.svc.RenameHabit(r.Context(), requestUser(r), r.PathValue("id"), req.Name)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -198,7 +210,7 @@ func (h *handler) renameHabit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) deleteHabit(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DeleteHabit(r.Context(), r.PathValue("id")); err != nil {
+	if err := h.svc.DeleteHabit(r.Context(), requestUser(r), r.PathValue("id")); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -206,7 +218,7 @@ func (h *handler) deleteHabit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) restoreHabit(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.RestoreHabit(r.Context(), r.PathValue("id")); err != nil {
+	if err := h.svc.RestoreHabit(r.Context(), requestUser(r), r.PathValue("id")); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -216,7 +228,7 @@ func (h *handler) restoreHabit(w http.ResponseWriter, r *http.Request) {
 // setDay returns the handler that marks (done) or unmarks a day; both are idempotent.
 func (h *handler) setDay(done bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := h.svc.SetDay(r.Context(), r.PathValue("id"), r.PathValue("day"), done); err != nil {
+		if err := h.svc.SetDay(r.Context(), requestUser(r), r.PathValue("id"), r.PathValue("day"), done); err != nil {
 			h.fail(w, r, err)
 			return
 		}
@@ -230,7 +242,7 @@ func (h *handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.svc.UpdateSettings(r.Context(), req.View, req.Accent); err != nil {
+	if err := h.svc.UpdateSettings(r.Context(), requestUser(r), req.View, req.Accent); err != nil {
 		h.fail(w, r, err)
 		return
 	}

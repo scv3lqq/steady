@@ -17,19 +17,21 @@ const (
 
 // Config is the process configuration.
 type Config struct {
-	Addr       string        // STEADY_ADDR, default "127.0.0.1:8770"
-	DBPath     string        // STEADY_DB, default "data/steady.db"
-	LogLevel   zerolog.Level // STEADY_LOG_LEVEL, default info
-	ExtraHosts []string      // STEADY_ALLOWED_HOSTS, comma-separated, default empty
+	Addr         string        // STEADY_ADDR, default "127.0.0.1:8770"
+	DBPath       string        // STEADY_DB, default "data/steady.db"
+	LogLevel     zerolog.Level // STEADY_LOG_LEVEL, default info
+	CookieSecure bool          // STEADY_COOKIE_SECURE, default true
+	ExtraHosts   []string      // STEADY_ALLOWED_HOSTS, comma-separated, default empty
 }
 
 // Load builds a Config from the environment read through getenv (os.Getenv in
 // production). An empty value means "use the default".
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Addr:     defaultAddr,
-		DBPath:   defaultDBPath,
-		LogLevel: zerolog.InfoLevel,
+		Addr:         defaultAddr,
+		DBPath:       defaultDBPath,
+		LogLevel:     zerolog.InfoLevel,
+		CookieSecure: true,
 	}
 
 	if v := getenv("STEADY_ADDR"); v != "" {
@@ -51,6 +53,16 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.LogLevel = level
 	}
 
+	if v := getenv("STEADY_COOKIE_SECURE"); v != "" {
+		switch v {
+		case "true":
+			cfg.CookieSecure = true
+		case "false":
+			cfg.CookieSecure = false
+		default:
+			return Config{}, fmt.Errorf("config: STEADY_COOKIE_SECURE: want true or false")
+		}
+	}
 	cfg.ExtraHosts = parseHosts(getenv("STEADY_ALLOWED_HOSTS"))
 
 	return cfg, nil

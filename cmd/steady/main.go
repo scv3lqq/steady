@@ -35,6 +35,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if len(os.Args) > 1 {
+		if os.Args[1] != "account" {
+			return fmt.Errorf("unknown command")
+		}
+		return runAccount(context.Background(), os.Args[2:], cfg, terminalPasswordReader{input: os.Stdin, output: os.Stderr}, os.Stdout)
+	}
 	log := zerolog.New(os.Stderr).Level(cfg.LogLevel).With().Timestamp().Logger()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

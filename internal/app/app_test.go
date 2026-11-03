@@ -1,14 +1,16 @@
 package app
 
 import (
-	"encoding/json"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
+	"github.com/pressly/goose/v3"
 	"github.com/rs/zerolog"
 
 	"github.com/scv3lqq/steady/internal/config"
@@ -44,39 +46,30 @@ func get(t *testing.T, a *App, host, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// assertSeededHabits stops the test unless GET /api/state lists the three demo habits in the order of
-// domain.SeedNames, and returns their ids. step says which start of the app is checked.
-func assertSeededHabits(t *testing.T, a *App, step string) []string {
+// assertEmptyAccount verifies that startup creates no demo habits and private routes require a session.
+func assertEmptyAccount(t *testing.T, a *App, step string) {
 	t.Helper()
-	rec := get(t, a, loopbackHost, "/api/state")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("%s: GET /api/state status = %d, want %d (body %q)", step, rec.Code, http.StatusOK, rec.Body.String())
+	if rec := get(t, a, loopbackHost, "/api/state"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("%s: unauthenticated state status %d", step, rec.Code)
 	}
-	var state struct {
-		Habits []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"habits"`
+	owner, err := a.store.AccountByUsername(t.Context(), "alice")
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		owner = domain.Account{ID: strings.Repeat("a", 32), Username: "alice", PasswordHash: "test:hash"}
+		err = a.store.CreateAccount(t.Context(), owner)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
-		t.Fatalf("%s: decode GET /api/state: %v", step, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(state.Habits) != 3 {
-		t.Fatalf("%s: GET /api/state lists %d habits, want 3", step, len(state.Habits))
+	state, err := a.store.State(t.Context(), owner.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ids := make([]string, 0, len(state.Habits))
-	names := make([]string, 0, len(state.Habits))
-	for _, h := range state.Habits {
-		ids = append(ids, h.ID)
-		names = append(names, h.Name)
+	if len(state.Habits) != 0 || string(state.View) != "week" || state.Accent != "#4FA872" {
+		t.Fatal("startup seeded demo data or changed account defaults")
 	}
-	if want := domain.SeedNames(); !slices.Equal(names, want) {
-		t.Errorf("%s: habit names = %q, want %q", step, names, want)
-	}
-	return ids
 }
 
-func TestNewServesSeededApp(t *testing.T) {
+func TestNewServesPublicAssetsWithoutSeeding(t *testing.T) {
 	cfg := config.Config{
 		Addr:     loopbackHost,
 		DBPath:   filepath.Join(t.TempDir(), "steady.db"),
@@ -108,17 +101,12 @@ func TestNewServesSeededApp(t *testing.T) {
 			}
 		})
 	}
-	firstIDs := assertSeededHabits(t, first, "first start")
+	assertEmptyAccount(t, first, "first start")
 
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	// The seeded marker lives in the database file, so a start on the same file must not add a second set. The ids
-	// are random per seeding, so the same ids show that the restart reopened that file instead of seeding another.
-	restartIDs := assertSeededHabits(t, startApp(t, cfg), "restart")
-	if !slices.Equal(restartIDs, firstIDs) {
-		t.Errorf("restart: habit ids = %q, want the ids of the first start %q", restartIDs, firstIDs)
-	}
+	assertEmptyAccount(t, startApp(t, cfg), "restart")
 }
 
 // The wiring is where the config meets the Host allowlist, so a dropped option shows up here and not in the
@@ -147,4 +135,54 @@ func TestHostAllowlistFromConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStartupPreservesLegacyWithoutClaimingOrPurging(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, e := sql.Open("sqlite", path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	provider, e := goose.NewProvider(goose.DialectSQLite3, db, os.DirFS("../repository/sqlite/migrations"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = provider.UpTo(t.Context(), 1); e != nil {
+		t.Fatal(e)
+	}
+	fixture := `
+ INSERT INTO habits(id,name,position,deleted_at) VALUES('00000000-0000-4000-8000-000000000001','Legacy private',7,1);
+ INSERT INTO habit_days(habit_id,day) VALUES('00000000-0000-4000-8000-000000000001','2025-01-01');
+ INSERT INTO settings(key,value) VALUES('view','year'),('unknown','preserve me');`
+	if _, e = db.ExecContext(t.Context(), fixture); e != nil {
+		t.Fatal(e)
+	}
+	_ = db.Close()
+	cfg := config.Config{Addr: loopbackHost, DBPath: path}
+	a := startApp(t, cfg)
+	if e = a.Close(); e != nil {
+		t.Fatal(e)
+	}
+	a = startApp(t, cfg)
+	db, e = sql.Open("sqlite", path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer func() { _ = db.Close() }()
+	var name, day, value string
+	var position, deleted int
+	if e = db.QueryRowContext(t.Context(), `SELECT name,position,deleted_at FROM habits WHERE user_id IS NULL`).Scan(&name, &position, &deleted); e != nil || name != "Legacy private" || position != 7 || deleted != 1 {
+		t.Fatal("startup changed or purged legacy habit")
+	}
+	if e = db.QueryRowContext(t.Context(), `SELECT day FROM habit_days`).Scan(&day); e != nil || day != "2025-01-01" {
+		t.Fatal("startup changed legacy days")
+	}
+	if e = db.QueryRowContext(t.Context(), `SELECT value FROM legacy_settings WHERE key='unknown'`).Scan(&value); e != nil || value != "preserve me" {
+		t.Fatal("startup changed legacy settings")
+	}
+	var count int
+	if e = db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM users`).Scan(&count); e != nil || count != 0 {
+		t.Fatal("startup created owner")
+	}
+	assertEmptyAccount(t, a, "legacy startup")
 }

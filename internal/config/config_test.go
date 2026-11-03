@@ -124,3 +124,29 @@ func TestAllowedHosts(t *testing.T) {
 		})
 	}
 }
+
+func TestCookieSecureStrictBoolean(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+		bad   bool
+	}{{"", true, false}, {"true", true, false}, {"false", false, false}, {"TRUE", false, true}, {"1", false, true}, {" false ", false, true}, {"yes", false, true}} {
+		t.Run(tc.value, func(t *testing.T) {
+			cfg, e := Load(func(k string) string {
+				if k == "STEADY_COOKIE_SECURE" {
+					return tc.value
+				}
+				return ""
+			})
+			if tc.bad {
+				if e == nil {
+					t.Fatal("accepted nonliteral boolean")
+				}
+				return
+			}
+			if e != nil || cfg.CookieSecure != tc.want {
+				t.Fatalf("CookieSecure: %v", e)
+			}
+		})
+	}
+}

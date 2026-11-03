@@ -41,7 +41,15 @@ function toState(api) {
 }
 export class Store {
     #onChange;
+    #channel;
     #state = { habits: [], view: 'week', accent: DEFAULT_ACCENT };
+    #auth = { status: 'checking', busy: false, error: '' };
+    #generation = 0;
+    #binding = '';
+    #controller = new AbortController();
+    #data = new Set();
+    #authQueue = Promise.resolve();
+    #authPending = 0;
     #queue = Promise.resolve();
     #queued = 0;
     #stale = false;
@@ -49,19 +57,139 @@ export class Store {
     #pending = new Map();
     constructor(onChange) {
         this.#onChange = onChange;
+        this.#channel = new BroadcastChannel('steady-auth');
+        this.#channel.addEventListener('message', () => this.#transition('anonymous'));
     }
     get state() {
         return this.#state;
     }
-    async load() {
+    get auth() {
+        return this.#auth;
+    }
+    load() {
+        const generation = this.#generation;
+        const work = this.#auth.status === 'authenticated'
+            ? this.#loadState(generation)
+            : this.#checkSession(generation);
+        return this.#track(work);
+    }
+    login(username, password) {
+        return this.#authenticate('/api/login', { username, password });
+    }
+    logout() {
+        return this.#authenticate('/api/logout');
+    }
+    #transition(status, binding = '') {
+        this.#generation += 1;
+        this.#controller.abort();
+        this.#controller = new AbortController();
+        this.#binding = binding;
+        this.#auth = { status, busy: this.#authPending > 0, error: '' };
+        this.#state = { habits: [], view: 'week', accent: DEFAULT_ACCENT };
+        for (const timer of this.#timers.values())
+            clearTimeout(timer);
+        this.#timers.clear();
+        this.#pending.clear();
+        this.#queue = Promise.resolve();
+        this.#queued = 0;
+        this.#stale = false;
+        this.#onChange();
+    }
+    #track(work) {
+        const tracked = work.finally(() => this.#data.delete(tracked));
+        this.#data.add(tracked);
+        return tracked;
+    }
+    async #waitForData() {
+        while (this.#data.size > 0)
+            await Promise.allSettled([...this.#data]);
+    }
+    #authenticate(path, body) {
+        this.#authPending += 1;
+        this.#transition('anonymous');
+        this.#channel.postMessage({ type: 'changed' });
+        const run = this.#authQueue.then(async () => {
+            this.#transition('anonymous');
+            // A fetch may ignore abort until its response/body settles. Do not replace its cookie yet.
+            await this.#waitForData();
+            const generation = this.#generation;
+            try {
+                const res = await fetch(path, requestInit('POST', body));
+                this.#channel.postMessage({ type: 'changed' });
+                if (generation !== this.#generation)
+                    return;
+                if (!res.ok) {
+                    this.#auth.error = path === '/api/login' ? 'Unable to log in. Check your credentials and try again.' : 'Unable to log out. Try again.';
+                }
+                else if (path === '/api/login') {
+                    await this.#track(this.#checkSession(generation));
+                }
+            }
+            catch {
+                if (generation === this.#generation)
+                    this.#auth.error = 'Unable to connect. Try again.';
+            }
+        }).finally(() => {
+            this.#authPending -= 1;
+            this.#auth.busy = this.#authPending > 0;
+            this.#onChange();
+        });
+        this.#authQueue = run.catch(() => undefined);
+        return run;
+    }
+    async #checkSession(generation) {
+        try {
+            const res = await fetch('/api/session', { signal: this.#controller.signal });
+            if (generation !== this.#generation)
+                return;
+            if (!res.ok) {
+                this.#transition('anonymous');
+                if (res.status !== 401) {
+                    this.#auth.error = 'Unable to check your session. Try again.';
+                    this.#onChange();
+                }
+                return;
+            }
+            const session = await res.json();
+            if (generation !== this.#generation)
+                return;
+            if (typeof session.username !== 'string' || !/^[a-f0-9]{64}$/.test(session.binding)) {
+                throw new Error('Invalid session response');
+            }
+            this.#transition('authenticated', session.binding);
+            await this.#loadState(this.#generation);
+        }
+        catch {
+            if (generation !== this.#generation)
+                return;
+            this.#transition('anonymous');
+            this.#auth.error = 'Unable to check your session. Try again.';
+            this.#onChange();
+        }
+    }
+    #privateInit(method, body) {
+        const init = requestInit(method, body);
+        const headers = new Headers(init.headers);
+        headers.set('X-Steady-Session', this.#binding);
+        return { ...init, headers, signal: this.#controller.signal };
+    }
+    async #loadState(generation) {
         let next;
         try {
-            const res = await fetch('/api/state');
+            const res = await fetch('/api/state', this.#privateInit('GET'));
+            if (generation !== this.#generation)
+                return;
+            if (res.status === 401) {
+                this.#transition('anonymous');
+                return;
+            }
             if (!res.ok) {
                 return;
             }
             // The server is ours: a malformed body throws in toState and counts as a failed load.
             next = toState((await res.json()));
+            if (generation !== this.#generation)
+                return;
         }
         catch {
             return;
@@ -83,6 +211,8 @@ export class Store {
         this.#onChange();
     }
     addHabit(name) {
+        if (this.#auth.status !== 'authenticated')
+            return;
         const id = crypto.randomUUID();
         this.#state.habits.push({ id, name, done: {} });
         this.#onChange();
@@ -109,13 +239,16 @@ export class Store {
         this.#onChange();
     }
     flushPending() {
+        if (this.#auth.status !== 'authenticated')
+            return;
         for (const timer of this.#timers.values()) {
             clearTimeout(timer);
         }
         for (const [id, name] of this.#pending) {
             // keepalive lets the request outlive the page that is being closed.
-            const init = { ...requestInit('PATCH', { name }), keepalive: true };
-            void fetch(habitPath(id), init).catch(() => undefined);
+            const init = { ...this.#privateInit('PATCH', { name }), keepalive: true };
+            const generation = this.#generation;
+            void this.#track(this.#flush(habitPath(id), init, generation));
         }
         this.#timers.clear();
         this.#pending.clear();
@@ -134,6 +267,8 @@ export class Store {
         return { habit, index };
     }
     restoreHabit(d) {
+        if (this.#auth.status !== 'authenticated')
+            return;
         const { habits } = this.#state;
         if (habits.some((h) => h.id === d.habit.id)) {
             return;
@@ -160,6 +295,8 @@ export class Store {
         this.#enqueue(method, `${habitPath(id)}/days/${encodeURIComponent(day)}`);
     }
     setView(view) {
+        if (this.#auth.status !== 'authenticated')
+            return;
         if (view === this.#state.view) {
             return;
         }
@@ -168,6 +305,8 @@ export class Store {
         this.#enqueue('PUT', '/api/settings', { view });
     }
     setAccent(accent) {
+        if (this.#auth.status !== 'authenticated')
+            return;
         if (accent === this.#state.accent || !PALETTE.includes(accent)) {
             return;
         }
@@ -190,19 +329,42 @@ export class Store {
         this.#enqueue('PATCH', habitPath(id), { name });
     }
     #enqueue(method, path, body) {
-        const init = requestInit(method, body);
+        const generation = this.#generation;
+        const init = this.#privateInit(method, body);
         this.#queued += 1;
         // The trailing catch keeps the chain alive: a failure in one step must not block the next.
-        this.#queue = this.#queue.then(() => this.#send(path, init)).catch(() => undefined);
+        this.#queue = this.#track(this.#queue.then(async () => {
+            if (generation !== this.#generation)
+                return;
+            await this.#send(path, init, generation);
+        }).catch(() => undefined));
     }
-    async #send(path, init) {
+    async #flush(path, init, generation) {
         try {
             const res = await fetch(path, init);
+            if (generation === this.#generation && res.status === 401)
+                this.#transition('anonymous');
+        }
+        catch {
+            // The page is closing; abort and network failures cannot be recovered here.
+        }
+    }
+    async #send(path, init, generation) {
+        try {
+            const res = await fetch(path, init);
+            if (generation !== this.#generation)
+                return;
+            if (res.status === 401) {
+                this.#transition('anonymous');
+                return;
+            }
             if (!res.ok) {
                 this.#stale = true;
             }
         }
         catch {
+            if (generation !== this.#generation)
+                return;
             this.#stale = true;
         }
         this.#queued -= 1;
@@ -210,7 +372,7 @@ export class Store {
         if (this.#stale && this.#queued === 0) {
             // Cleared first: load() sets it again when it discards a response that raced with an edit.
             this.#stale = false;
-            await this.load();
+            await this.#loadState(generation);
         }
     }
 }

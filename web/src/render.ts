@@ -13,7 +13,7 @@ import {
   yearCaptionMonth,
   yearGrid,
 } from './dates.js';
-import type { Deleted, Habit, State, View } from './store.js';
+import type { Auth, Deleted, Habit, State, View } from './store.js';
 
 export interface Ui {
   paletteOpen: boolean;
@@ -55,13 +55,30 @@ const VIEW_SPECS: Readonly<Record<View, ViewSpec>> = {
   year: { rowClass: 'habit block year-block', gridClass: 'year-grid', dayClass: 'cell' },
 };
 
-export function render(root: HTMLElement, state: State, ui: Ui, now: Date): void {
+export function render(root: HTMLElement, state: State, ui: Ui, now: Date, auth: Auth): void {
+  const authenticated = auth.status === 'authenticated';
+  required(root, '#auth-shell').hidden = authenticated;
+  required(root, '#session-check').hidden = auth.status !== 'checking';
+  required(root, '#login-form').hidden = auth.status !== 'anonymous';
+  required(root, '#tracker').hidden = !authenticated;
+  required<HTMLButtonElement>(root, '#login-submit').disabled = auth.busy;
+  required<HTMLButtonElement>(root, '#logout').disabled = auth.busy;
+  const error = required(root, '#auth-error');
+  error.hidden = auth.error === '';
+  setText(error, auth.error);
+  document.documentElement.style.setProperty('--accent', state.accent);
+  if (!authenticated) {
+    required(root, '#list').replaceChildren();
+    setText(required(root, '#title'), '');
+    setText(required(root, '#toast-text'), '');
+    required(root, '#toast').hidden = true;
+    return;
+  }
   const todayKey = dayKey(now);
   const total = state.habits.length;
   const done = state.habits.filter((habit) => habit.done[todayKey] === true).length;
 
   setText(required(root, '#today'), formatHeaderDate(now));
-  document.documentElement.style.setProperty('--accent', state.accent);
   renderPalette(root, state.accent, ui.paletteOpen);
 
   setText(required(root, '#title'), titleText(done, total));

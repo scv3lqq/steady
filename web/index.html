@@ -12,12 +12,26 @@
 </head>
 <body>
   <main class="app" id="app">
+    <section class="auth-shell" id="auth-shell" aria-label="Account">
+      <span class="wordmark">Steady</span>
+      <p class="session-check" id="session-check" role="status">Checking session...</p>
+      <form class="login-form" id="login-form" hidden>
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <p class="auth-error" id="auth-error" role="alert" hidden></p>
+        <button class="login-submit" id="login-submit" type="submit">Log in</button>
+      </form>
+    </section>
+    <div class="tracker" id="tracker" hidden>
     <header class="header">
       <div class="topbar">
         <span class="wordmark">Steady</span>
         <div class="topbar-end">
           <span class="today" id="today"></span>
           <button type="button" class="accent-toggle" id="accent-toggle" data-action="toggle-palette" aria-label="Accent color" aria-expanded="false" aria-controls="palette"><span class="swatch"></span></button>
+          <button type="button" class="logout" id="logout" data-action="logout">Log out</button>
         </div>
       </div>
       <div class="palette" id="palette" role="radiogroup" aria-label="Accent color" hidden>
@@ -54,6 +68,7 @@
     <div class="toast" id="toast" role="status" hidden>
       <span class="toast-text" id="toast-text"></span>
       <button type="button" class="undo" data-action="undo">Undo</button>
+    </div>
     </div>
   </main>
 </body>

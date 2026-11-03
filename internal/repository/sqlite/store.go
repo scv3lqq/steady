@@ -1,5 +1,5 @@
 // Package sqlite is the SQLite adapter of the habit repository: embedded goose migrations,
-// sqlc-generated queries and the first-run seed.
+// sqlc-generated queries and owner-scoped data access.
 package sqlite
 
 import (
@@ -23,7 +23,6 @@ import (
 const (
 	keyView   = "view"
 	keyAccent = "accent"
-	keySeeded = "seeded"
 )
 
 // dsnQuery is applied to every connection: foreign_keys makes a purge cascade to habit_days,
@@ -96,8 +95,8 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // State returns the active habits in position order with their done days. A missing or invalid stored view or
 // accent falls back to the default.
-func (s *Store) State(ctx context.Context) (domain.State, error) {
-	rows, err := s.q.ListSettings(ctx)
+func (s *Store) State(ctx context.Context, userID string) (domain.State, error) {
+	rows, err := s.q.ListSettings(ctx, userID)
 	if err != nil {
 		return domain.State{}, fmt.Errorf("list settings: %w", err)
 	}
@@ -105,11 +104,11 @@ func (s *Store) State(ctx context.Context) (domain.State, error) {
 	for _, row := range rows {
 		settings[row.Key] = row.Value
 	}
-	habits, err := s.q.ListActiveHabits(ctx)
+	habits, err := s.q.ListActiveHabits(ctx, ownerID(userID))
 	if err != nil {
 		return domain.State{}, fmt.Errorf("list habits: %w", err)
 	}
-	days, err := s.q.ListActiveDays(ctx)
+	days, err := s.q.ListActiveDays(ctx, ownerID(userID))
 	if err != nil {
 		return domain.State{}, fmt.Errorf("list days: %w", err)
 	}
@@ -148,8 +147,8 @@ func accentOrDefault(stored string) string {
 
 // AddHabit appends a habit after the last one, deleted ones included. It returns domain.ErrExists when the id
 // is taken, also by a soft-deleted habit.
-func (s *Store) AddHabit(ctx context.Context, id, name string) error {
-	n, err := s.q.InsertHabit(ctx, sqlcdb.InsertHabitParams{ID: id, Name: name})
+func (s *Store) AddHabit(ctx context.Context, userID, id, name string) error {
+	n, err := s.q.InsertHabit(ctx, sqlcdb.InsertHabitParams{UserID: ownerID(userID), ID: id, Name: name})
 	if err != nil {
 		return fmt.Errorf("add habit %s: %w", id, err)
 	}
@@ -160,8 +159,8 @@ func (s *Store) AddHabit(ctx context.Context, id, name string) error {
 }
 
 // RenameHabit renames an active habit. It returns domain.ErrNotFound when there is none.
-func (s *Store) RenameHabit(ctx context.Context, id, name string) error {
-	n, err := s.q.RenameHabit(ctx, sqlcdb.RenameHabitParams{Name: name, ID: id})
+func (s *Store) RenameHabit(ctx context.Context, userID, id, name string) error {
+	n, err := s.q.RenameHabit(ctx, sqlcdb.RenameHabitParams{UserID: ownerID(userID), Name: name, ID: id})
 	if err != nil {
 		return fmt.Errorf("rename habit %s: %w", id, err)
 	}
@@ -173,8 +172,8 @@ func (s *Store) RenameHabit(ctx context.Context, id, name string) error {
 
 // DeleteHabit soft-deletes an active habit at the given time, so RestoreHabit can bring it back at its
 // position. It returns domain.ErrNotFound when there is no active habit.
-func (s *Store) DeleteHabit(ctx context.Context, id string, at time.Time) error {
-	n, err := s.q.SoftDeleteHabit(ctx, sqlcdb.SoftDeleteHabitParams{DeletedAt: at.Unix(), ID: id})
+func (s *Store) DeleteHabit(ctx context.Context, userID, id string, at time.Time) error {
+	n, err := s.q.SoftDeleteHabit(ctx, sqlcdb.SoftDeleteHabitParams{UserID: ownerID(userID), DeletedAt: at.Unix(), ID: id})
 	if err != nil {
 		return fmt.Errorf("delete habit %s: %w", id, err)
 	}
@@ -186,8 +185,8 @@ func (s *Store) DeleteHabit(ctx context.Context, id string, at time.Time) error 
 
 // RestoreHabit undoes DeleteHabit; on an active habit it does nothing. It returns domain.ErrNotFound when the
 // habit is gone.
-func (s *Store) RestoreHabit(ctx context.Context, id string) error {
-	n, err := s.q.RestoreHabit(ctx, id)
+func (s *Store) RestoreHabit(ctx context.Context, userID, id string) error {
+	n, err := s.q.RestoreHabit(ctx, sqlcdb.RestoreHabitParams{ID: id, UserID: ownerID(userID)})
 	if err != nil {
 		return fmt.Errorf("restore habit %s: %w", id, err)
 	}
@@ -209,14 +208,14 @@ func (s *Store) PurgeDeleted(ctx context.Context, before time.Time) (int64, erro
 
 // SetDay marks or unmarks a day of an active habit; repeating either is not an error. It returns
 // domain.ErrNotFound when there is no active habit.
-func (s *Store) SetDay(ctx context.Context, id, day string, done bool) error {
+func (s *Store) SetDay(ctx context.Context, userID, id, day string, done bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("set day %s: begin: %w", id, err)
 	}
 	defer rollback(tx)
 	q := s.q.WithTx(tx)
-	n, err := q.CountActiveHabit(ctx, id)
+	n, err := q.CountActiveHabit(ctx, sqlcdb.CountActiveHabitParams{ID: id, UserID: ownerID(userID)})
 	if err != nil {
 		return fmt.Errorf("set day %s: count habit: %w", id, err)
 	}
@@ -224,9 +223,9 @@ func (s *Store) SetDay(ctx context.Context, id, day string, done bool) error {
 		return fmt.Errorf("set day %s: %w", id, domain.ErrNotFound)
 	}
 	if done {
-		err = q.MarkDay(ctx, sqlcdb.MarkDayParams{HabitID: id, Day: day})
+		err = q.MarkDay(ctx, sqlcdb.MarkDayParams{UserID: ownerID(userID), HabitID: id, Day: day})
 	} else {
-		err = q.UnmarkDay(ctx, sqlcdb.UnmarkDayParams{HabitID: id, Day: day})
+		err = q.UnmarkDay(ctx, sqlcdb.UnmarkDayParams{UserID: ownerID(userID), HabitID: id, Day: day})
 	}
 	if err != nil {
 		return fmt.Errorf("set day %s %s: %w", id, day, err)
@@ -238,7 +237,7 @@ func (s *Store) SetDay(ctx context.Context, id, day string, done bool) error {
 }
 
 // UpdateSettings stores the view and the accent that are set in u; both are written or neither.
-func (s *Store) UpdateSettings(ctx context.Context, u domain.SettingsUpdate) error {
+func (s *Store) UpdateSettings(ctx context.Context, userID string, u domain.SettingsUpdate) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("update settings: begin: %w", err)
@@ -246,12 +245,12 @@ func (s *Store) UpdateSettings(ctx context.Context, u domain.SettingsUpdate) err
 	defer rollback(tx)
 	q := s.q.WithTx(tx)
 	if u.View != nil {
-		if err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{Key: keyView, Value: string(*u.View)}); err != nil {
+		if err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{UserID: userID, Key: keyView, Value: string(*u.View)}); err != nil {
 			return fmt.Errorf("update settings: view: %w", err)
 		}
 	}
 	if u.Accent != nil {
-		if err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{Key: keyAccent, Value: *u.Accent}); err != nil {
+		if err := q.UpsertSetting(ctx, sqlcdb.UpsertSettingParams{UserID: userID, Key: keyAccent, Value: *u.Accent}); err != nil {
 			return fmt.Errorf("update settings: accent: %w", err)
 		}
 	}
@@ -264,4 +263,9 @@ func (s *Store) UpdateSettings(ctx context.Context, u domain.SettingsUpdate) err
 // rollback undoes a transaction that was not committed; after Commit it has nothing to undo.
 func rollback(tx *sql.Tx) {
 	_ = tx.Rollback()
+}
+
+// ownerID supplies an explicit non-NULL owner predicate, including for an empty caller ID.
+func ownerID(userID string) sql.NullString {
+	return sql.NullString{String: userID, Valid: true}
 }

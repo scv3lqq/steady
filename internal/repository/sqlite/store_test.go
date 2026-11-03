@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"errors"
-	"math/rand/v2"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -13,10 +12,11 @@ import (
 )
 
 const (
-	idA = "00000000-0000-4000-8000-00000000000a"
-	idB = "00000000-0000-4000-8000-00000000000b"
-	idC = "00000000-0000-4000-8000-00000000000c"
-	idD = "00000000-0000-4000-8000-00000000000d"
+	testOwner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	idA       = "00000000-0000-4000-8000-00000000000a"
+	idB       = "00000000-0000-4000-8000-00000000000b"
+	idC       = "00000000-0000-4000-8000-00000000000c"
+	idD       = "00000000-0000-4000-8000-00000000000d"
 )
 
 func newStore(t *testing.T) *Store {
@@ -30,12 +30,15 @@ func newStore(t *testing.T) *Store {
 			t.Errorf("Close: %v", err)
 		}
 	})
+	if err := s.CreateAccount(t.Context(), domain.Account{ID: testOwner, Username: "owner", PasswordHash: "hash"}); err != nil {
+		t.Fatal(err)
+	}
 	return s
 }
 
 func mustState(t *testing.T, s *Store) domain.State {
 	t.Helper()
-	st, err := s.State(t.Context())
+	st, err := s.State(t.Context(), testOwner)
 	if err != nil {
 		t.Fatalf("State: %v", err)
 	}
@@ -44,21 +47,21 @@ func mustState(t *testing.T, s *Store) domain.State {
 
 func mustAdd(t *testing.T, s *Store, id, name string) {
 	t.Helper()
-	if err := s.AddHabit(t.Context(), id, name); err != nil {
+	if err := s.AddHabit(t.Context(), testOwner, id, name); err != nil {
 		t.Fatalf("AddHabit(%s, %q): %v", id, name, err)
 	}
 }
 
 func mustDelete(t *testing.T, s *Store, id string, at time.Time) {
 	t.Helper()
-	if err := s.DeleteHabit(t.Context(), id, at); err != nil {
+	if err := s.DeleteHabit(t.Context(), testOwner, id, at); err != nil {
 		t.Fatalf("DeleteHabit(%s): %v", id, err)
 	}
 }
 
 func mustSetDay(t *testing.T, s *Store, id, day string, done bool) {
 	t.Helper()
-	if err := s.SetDay(t.Context(), id, day, done); err != nil {
+	if err := s.SetDay(t.Context(), testOwner, id, day, done); err != nil {
 		t.Fatalf("SetDay(%s, %s, %t): %v", id, day, done, err)
 	}
 }
@@ -143,11 +146,11 @@ func TestAddHabitOrderAndConflict(t *testing.T) {
 		}
 	}
 
-	if err := s.AddHabit(t.Context(), idA, "Alpha"); !errors.Is(err, domain.ErrExists) {
+	if err := s.AddHabit(t.Context(), testOwner, idA, "Alpha"); !errors.Is(err, domain.ErrExists) {
 		t.Errorf("AddHabit(A again) error = %v, want %v", err, domain.ErrExists)
 	}
 
-	if err := s.RenameHabit(t.Context(), idA, "Renamed"); err != nil {
+	if err := s.RenameHabit(t.Context(), testOwner, idA, "Renamed"); err != nil {
 		t.Fatalf("RenameHabit(A): %v", err)
 	}
 	assertNames(t, mustState(t, s), "after renaming A", "Renamed", "Beta")
@@ -167,7 +170,7 @@ func TestSoftDeleteRestoreKeepsPosition(t *testing.T) {
 	mustAdd(t, s, idD, "Delta")
 	assertNames(t, mustState(t, s), "after adding D", "Alpha", "Gamma", "Delta")
 
-	if err := s.RestoreHabit(t.Context(), idB); err != nil {
+	if err := s.RestoreHabit(t.Context(), testOwner, idB); err != nil {
 		t.Fatalf("RestoreHabit(B): %v", err)
 	}
 	st := mustState(t, s)
@@ -183,7 +186,7 @@ func TestSoftDeleteRestoreKeepsPosition(t *testing.T) {
 	mustAdd(t, fresh, idC, "Gamma")
 	mustDelete(t, fresh, idC, t0)
 	mustAdd(t, fresh, idA, "Alpha")
-	if err := fresh.RestoreHabit(t.Context(), idC); err != nil {
+	if err := fresh.RestoreHabit(t.Context(), testOwner, idC); err != nil {
 		t.Fatalf("RestoreHabit(C) on a fresh store: %v", err)
 	}
 	assertNames(t, mustState(t, fresh), "after restoring the last habit", "Beta", "Gamma", "Alpha")
@@ -199,34 +202,34 @@ func TestNotFound(t *testing.T) {
 	}{
 		{
 			name: "rename unknown",
-			call: func(ctx context.Context, s *Store) error { return s.RenameHabit(ctx, idC, "Renamed") },
+			call: func(ctx context.Context, s *Store) error { return s.RenameHabit(ctx, testOwner, idC, "Renamed") },
 		},
 		{
 			name: "delete unknown",
-			call: func(ctx context.Context, s *Store) error { return s.DeleteHabit(ctx, idC, t0) },
+			call: func(ctx context.Context, s *Store) error { return s.DeleteHabit(ctx, testOwner, idC, t0) },
 		},
 		{
 			name:     "delete B twice",
 			deletedB: true,
-			call:     func(ctx context.Context, s *Store) error { return s.DeleteHabit(ctx, idB, t0) },
+			call:     func(ctx context.Context, s *Store) error { return s.DeleteHabit(ctx, testOwner, idB, t0) },
 		},
 		{
 			name: "restore unknown",
-			call: func(ctx context.Context, s *Store) error { return s.RestoreHabit(ctx, idC) },
+			call: func(ctx context.Context, s *Store) error { return s.RestoreHabit(ctx, testOwner, idC) },
 		},
 		{
 			name: "set day unknown",
-			call: func(ctx context.Context, s *Store) error { return s.SetDay(ctx, idC, "2026-10-31", true) },
+			call: func(ctx context.Context, s *Store) error { return s.SetDay(ctx, testOwner, idC, "2026-10-31", true) },
 		},
 		{
 			name:     "set day on soft-deleted B",
 			deletedB: true,
-			call:     func(ctx context.Context, s *Store) error { return s.SetDay(ctx, idB, "2026-10-31", true) },
+			call:     func(ctx context.Context, s *Store) error { return s.SetDay(ctx, testOwner, idB, "2026-10-31", true) },
 		},
 		{
 			name:     "rename soft-deleted B",
 			deletedB: true,
-			call:     func(ctx context.Context, s *Store) error { return s.RenameHabit(ctx, idB, "Renamed") },
+			call:     func(ctx context.Context, s *Store) error { return s.RenameHabit(ctx, testOwner, idB, "Renamed") },
 		},
 	}
 	for _, tc := range tests {
@@ -268,7 +271,7 @@ func TestPurge(t *testing.T) {
 		t.Errorf("PurgeDeleted(t0 + 1s) = %d, want 1", n)
 	}
 
-	if err := s.RestoreHabit(ctx, idA); !errors.Is(err, domain.ErrNotFound) {
+	if err := s.RestoreHabit(ctx, testOwner, idA); !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("RestoreHabit(purged A) error = %v, want %v", err, domain.ErrNotFound)
 	}
 	var days int
@@ -317,20 +320,20 @@ func TestSettings(t *testing.T) {
 	assertSettings("defaults", domain.ViewWeek, "#4FA872")
 
 	month := domain.ViewMonth
-	if err := s.UpdateSettings(ctx, domain.SettingsUpdate{View: &month}); err != nil {
+	if err := s.UpdateSettings(ctx, testOwner, domain.SettingsUpdate{View: &month}); err != nil {
 		t.Fatalf("UpdateSettings(view): %v", err)
 	}
 	assertSettings("after the view update", domain.ViewMonth, "#4FA872")
 
 	accent := "#5B8CEB"
-	if err := s.UpdateSettings(ctx, domain.SettingsUpdate{Accent: &accent}); err != nil {
+	if err := s.UpdateSettings(ctx, testOwner, domain.SettingsUpdate{Accent: &accent}); err != nil {
 		t.Fatalf("UpdateSettings(accent): %v", err)
 	}
 	assertSettings("after the accent update", domain.ViewMonth, "#5B8CEB")
 
 	// A view-only update must leave the stored accent alone.
 	year := domain.ViewYear
-	if err := s.UpdateSettings(ctx, domain.SettingsUpdate{View: &year}); err != nil {
+	if err := s.UpdateSettings(ctx, testOwner, domain.SettingsUpdate{View: &year}); err != nil {
 		t.Fatalf("UpdateSettings(view again): %v", err)
 	}
 	assertSettings("after the second view update", domain.ViewYear, "#5B8CEB")
@@ -340,57 +343,5 @@ func TestSettings(t *testing.T) {
 	}
 	if got := mustState(t, s).View; got != domain.ViewWeek {
 		t.Errorf("view after storing 'decade' = %q, want %q", got, domain.ViewWeek)
-	}
-}
-
-func TestSeedOnce(t *testing.T) {
-	ctx := t.Context()
-	s := newStore(t)
-	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.Local)
-	rng := rand.New(rand.NewPCG(1, 2))
-	seed := func(step string) bool {
-		t.Helper()
-		seeded, err := s.SeedOnce(ctx, now, rng)
-		if err != nil {
-			t.Fatalf("SeedOnce (%s): %v", step, err)
-		}
-		return seeded
-	}
-
-	if !seed("first call") {
-		t.Fatal("first SeedOnce = false, want true")
-	}
-	st := mustState(t, s)
-	// The names are spelled out: comparing with domain.SeedNames() would accept whatever it returns.
-	assertNames(t, st, "after the first seed", "Drink 2 L of water", "Walk 30 minutes", "Read 10 pages")
-	for _, h := range st.Habits {
-		if err := domain.ValidateID(h.ID); err != nil {
-			t.Errorf("habit %q: seeded id %q: %v", h.Name, h.ID, err)
-		}
-		if len(h.Done) == 0 {
-			t.Errorf("habit %q: Done is empty, want a year of history", h.Name)
-		}
-		for _, day := range h.Done {
-			if day < "2025-11-02" || day > "2026-11-01" {
-				t.Errorf("habit %q: day %s is outside 2025-11-02..2026-11-01", h.Name, day)
-			}
-		}
-	}
-
-	if seed("second call") {
-		t.Error("second SeedOnce = true, want false")
-	}
-	if got := len(mustState(t, s).Habits); got != 3 {
-		t.Errorf("habits after the second seed = %d, want 3", got)
-	}
-
-	for _, h := range st.Habits {
-		mustDelete(t, s, h.ID, now)
-	}
-	if seed("third call") {
-		t.Error("third SeedOnce = true, want false")
-	}
-	if got := len(mustState(t, s).Habits); got != 0 {
-		t.Errorf("habits after deleting all and seeding again = %d, want 0", got)
 	}
 }

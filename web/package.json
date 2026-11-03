@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "TZ=America/New_York node --test test/dates.test.mjs"
+    "test": "TZ=America/New_York node --test test/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "6.0.3"

@@ -8,12 +8,29 @@ const VIEW_SPECS = {
     month: { rowClass: 'habit block month-block', gridClass: 'month-grid', dayClass: 'dot' },
     year: { rowClass: 'habit block year-block', gridClass: 'year-grid', dayClass: 'cell' },
 };
-export function render(root, state, ui, now) {
+export function render(root, state, ui, now, auth) {
+    const authenticated = auth.status === 'authenticated';
+    required(root, '#auth-shell').hidden = authenticated;
+    required(root, '#session-check').hidden = auth.status !== 'checking';
+    required(root, '#login-form').hidden = auth.status !== 'anonymous';
+    required(root, '#tracker').hidden = !authenticated;
+    required(root, '#login-submit').disabled = auth.busy;
+    required(root, '#logout').disabled = auth.busy;
+    const error = required(root, '#auth-error');
+    error.hidden = auth.error === '';
+    setText(error, auth.error);
+    document.documentElement.style.setProperty('--accent', state.accent);
+    if (!authenticated) {
+        required(root, '#list').replaceChildren();
+        setText(required(root, '#title'), '');
+        setText(required(root, '#toast-text'), '');
+        required(root, '#toast').hidden = true;
+        return;
+    }
     const todayKey = dayKey(now);
     const total = state.habits.length;
     const done = state.habits.filter((habit) => habit.done[todayKey] === true).length;
     setText(required(root, '#today'), formatHeaderDate(now));
-    document.documentElement.style.setProperty('--accent', state.accent);
     renderPalette(root, state.accent, ui.paletteOpen);
     setText(required(root, '#title'), titleText(done, total));
     required(root, '#progress').style.width = `${total === 0 ? 0 : (done / total) * 100}%`;

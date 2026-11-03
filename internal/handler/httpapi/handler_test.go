@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -57,8 +59,12 @@ func fixedNow() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 // server is the real stack: a SQLite file, the use case service on it and the HTTP handler on that. Going through
 // all three makes a status code the product of validation, storage and mapping together, as a client sees it.
 type server struct {
-	handler http.Handler
-	store   *sqlite.Store
+	handler  http.Handler
+	store    *sqlite.Store
+	accounts *usecase.Accounts
+	cookie   *http.Cookie
+	binding  string
+	ownerID  string
 }
 
 func newServer(t *testing.T, opts Options) *server {
@@ -80,14 +86,39 @@ func newLoggedServer(t *testing.T, opts Options, log zerolog.Logger) *server {
 		}
 	})
 	svc := usecase.New(store, fixedNow, zerolog.Nop())
+	accounts, err := usecase.NewAccounts(store, &httpTestHasher{}, fixedNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = accounts.Create(t.Context(), "alice", []byte("alice password")); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := accounts.Login(t.Context(), "alice", []byte("alice password"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := accounts.Current(t.Context(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Accounts = accounts
 	h, err := New(svc, staticFiles(), opts, log)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return &server{handler: h, store: store}
+	digest := sha256.Sum256([]byte("steady-request:" + token))
+	return &server{handler: h, store: store, accounts: accounts, cookie: &http.Cookie{Name: "steady_session", Value: token}, binding: hex.EncodeToString(digest[:]), ownerID: owner.ID}
 }
 
 func (s *server) do(req *http.Request) *httptest.ResponseRecorder {
+	if strings.HasPrefix(req.URL.Path, "/api/") && req.URL.Path != "/api/login" {
+		req.AddCookie(s.cookie)
+		req.Header.Set("X-Steady-Session", s.binding)
+	}
+	return s.raw(req)
+}
+
+func (s *server) raw(req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
 	return rec
@@ -485,7 +516,7 @@ func TestInternalError(t *testing.T) {
 		t.Fatalf("store.Close: %v", err)
 	}
 	// The error the handler is about to hit, so the test can look for its text in the response and in the log.
-	_, cause := srv.store.State(t.Context())
+	_, cause := srv.store.State(t.Context(), srv.ownerID)
 	if cause == nil {
 		t.Fatal("State on a closed store succeeded")
 	}
@@ -509,14 +540,8 @@ func TestInternalError(t *testing.T) {
 	if entry.Level != "error" {
 		t.Errorf("log level = %q, want %q", entry.Level, "error")
 	}
-	if entry.Method != http.MethodGet {
-		t.Errorf("log method = %q, want %q", entry.Method, http.MethodGet)
-	}
-	if entry.Path != "/api/state" {
-		t.Errorf("log path = %q, want %q", entry.Path, "/api/state")
-	}
-	if !strings.Contains(entry.Error, cause.Error()) {
-		t.Errorf("log error = %q, want it to contain %q", entry.Error, cause.Error())
+	if entry.Error != "" || strings.Contains(logs.String(), cause.Error()) {
+		t.Error("authentication log leaked infrastructure error")
 	}
 }
 

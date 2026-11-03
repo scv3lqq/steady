@@ -7,50 +7,155 @@ package sqlcdb
 
 import (
 	"context"
+	"database/sql"
 )
 
-const countActiveHabit = `-- name: CountActiveHabit :one
-SELECT COUNT(*) FROM habits WHERE id = ?1 AND deleted_at IS NULL
+const accountByUsername = `-- name: AccountByUsername :one
+SELECT id, username, password_hash FROM users WHERE username = ?1
 `
 
-func (q *Queries) CountActiveHabit(ctx context.Context, id string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countActiveHabit, id)
+func (q *Queries) AccountByUsername(ctx context.Context, username string) (User, error) {
+	row := q.db.QueryRowContext(ctx, accountByUsername, username)
+	var i User
+	err := row.Scan(&i.ID, &i.Username, &i.PasswordHash)
+	return i, err
+}
+
+const assignLegacyHabits = `-- name: AssignLegacyHabits :exec
+UPDATE habits SET user_id = ?1 WHERE user_id IS NULL
+`
+
+func (q *Queries) AssignLegacyHabits(ctx context.Context, userID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, assignLegacyHabits, userID)
+	return err
+}
+
+const bootstrapUsername = `-- name: BootstrapUsername :one
+SELECT username FROM bootstrap_ledger WHERE singleton = 1
+`
+
+func (q *Queries) BootstrapUsername(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, bootstrapUsername)
+	var username string
+	err := row.Scan(&username)
+	return username, err
+}
+
+const clearLegacySettings = `-- name: ClearLegacySettings :exec
+DELETE FROM legacy_settings
+`
+
+func (q *Queries) ClearLegacySettings(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, clearLegacySettings)
+	return err
+}
+
+const completeBootstrap = `-- name: CompleteBootstrap :exec
+INSERT INTO bootstrap_ledger(singleton, username) VALUES(1, ?1)
+`
+
+func (q *Queries) CompleteBootstrap(ctx context.Context, username string) error {
+	_, err := q.db.ExecContext(ctx, completeBootstrap, username)
+	return err
+}
+
+const copyLegacySettings = `-- name: CopyLegacySettings :exec
+INSERT INTO settings(user_id, key, value)
+SELECT ?1, key, value FROM legacy_settings
+`
+
+func (q *Queries) CopyLegacySettings(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, copyLegacySettings, userID)
+	return err
+}
+
+const countActiveHabit = `-- name: CountActiveHabit :one
+SELECT COUNT(*) FROM habits
+WHERE id = ?1 AND user_id = ?2 AND deleted_at IS NULL
+`
+
+type CountActiveHabitParams struct {
+	ID     string
+	UserID sql.NullString
+}
+
+func (q *Queries) CountActiveHabit(ctx context.Context, arg CountActiveHabitParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveHabit, arg.ID, arg.UserID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
-const insertHabit = `-- name: InsertHabit :execrows
-INSERT INTO habits (id, name, position)
-VALUES (?1, ?2, (SELECT COALESCE(MAX(position), -1) + 1 FROM habits))
-ON CONFLICT (id) DO NOTHING
+const createAccount = `-- name: CreateAccount :execrows
+INSERT INTO users(id, username, password_hash)
+VALUES (?1, ?2, ?3)
+ON CONFLICT (username) DO NOTHING
 `
 
-type InsertHabitParams struct {
-	ID   string
-	Name string
+type CreateAccountParams struct {
+	ID           string
+	Username     string
+	PasswordHash string
 }
 
-func (q *Queries) InsertHabit(ctx context.Context, arg InsertHabitParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertHabit, arg.ID, arg.Name)
+func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createAccount, arg.ID, arg.Username, arg.PasswordHash)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const insertSettingIfAbsent = `-- name: InsertSettingIfAbsent :execrows
-INSERT INTO settings (key, value) VALUES (?1, ?2)
-ON CONFLICT (key) DO NOTHING
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= CAST(?1 AS INTEGER)
 `
 
-type InsertSettingIfAbsentParams struct {
-	Key   string
-	Value string
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, now int64) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredSessions, now)
+	return err
 }
 
-func (q *Queries) InsertSettingIfAbsent(ctx context.Context, arg InsertSettingIfAbsentParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertSettingIfAbsent, arg.Key, arg.Value)
+const insertHabit = `-- name: InsertHabit :execrows
+INSERT INTO habits (id, name, user_id, position)
+VALUES (?1, ?2, ?3,
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = ?3))
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertHabitParams struct {
+	ID     string
+	Name   string
+	UserID sql.NullString
+}
+
+func (q *Queries) InsertHabit(ctx context.Context, arg InsertHabitParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertHabit, arg.ID, arg.Name, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const insertSession = `-- name: InsertSession :execrows
+INSERT INTO sessions(token_hash, user_id, expires_at)
+SELECT ?1, id, CAST(?2 AS INTEGER) FROM users
+WHERE id = ?3 AND password_hash = ?4
+`
+
+type InsertSessionParams struct {
+	TokenHash            string
+	ExpiresAt            int64
+	UserID               string
+	ExpectedPasswordHash string
+}
+
+func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertSession,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.UserID,
+		arg.ExpectedPasswordHash,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -59,11 +164,11 @@ func (q *Queries) InsertSettingIfAbsent(ctx context.Context, arg InsertSettingIf
 
 const listActiveDays = `-- name: ListActiveDays :many
 SELECT d.habit_id, d.day FROM habit_days AS d JOIN habits AS h ON h.id = d.habit_id
-WHERE h.deleted_at IS NULL ORDER BY d.habit_id, d.day
+WHERE h.user_id = ?1 AND h.deleted_at IS NULL ORDER BY d.habit_id, d.day
 `
 
-func (q *Queries) ListActiveDays(ctx context.Context) ([]HabitDay, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveDays)
+func (q *Queries) ListActiveDays(ctx context.Context, userID sql.NullString) ([]HabitDay, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveDays, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +191,8 @@ func (q *Queries) ListActiveDays(ctx context.Context) ([]HabitDay, error) {
 }
 
 const listActiveHabits = `-- name: ListActiveHabits :many
-SELECT id, name FROM habits WHERE deleted_at IS NULL ORDER BY position, id
+SELECT id, name FROM habits
+WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY position, id
 `
 
 type ListActiveHabitsRow struct {
@@ -94,8 +200,8 @@ type ListActiveHabitsRow struct {
 	Name string
 }
 
-func (q *Queries) ListActiveHabits(ctx context.Context) ([]ListActiveHabitsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listActiveHabits)
+func (q *Queries) ListActiveHabits(ctx context.Context, userID sql.NullString) ([]ListActiveHabitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveHabits, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,18 +224,23 @@ func (q *Queries) ListActiveHabits(ctx context.Context) ([]ListActiveHabitsRow, 
 }
 
 const listSettings = `-- name: ListSettings :many
-SELECT key, value FROM settings
+SELECT key, value FROM settings WHERE user_id = ?1
 `
 
-func (q *Queries) ListSettings(ctx context.Context) ([]Setting, error) {
-	rows, err := q.db.QueryContext(ctx, listSettings)
+type ListSettingsRow struct {
+	Key   string
+	Value string
+}
+
+func (q *Queries) ListSettings(ctx context.Context, userID string) ([]ListSettingsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSettings, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Setting{}
+	items := []ListSettingsRow{}
 	for rows.Next() {
-		var i Setting
+		var i ListSettingsRow
 		if err := rows.Scan(&i.Key, &i.Value); err != nil {
 			return nil, err
 		}
@@ -145,22 +256,26 @@ func (q *Queries) ListSettings(ctx context.Context) ([]Setting, error) {
 }
 
 const markDay = `-- name: MarkDay :exec
-INSERT INTO habit_days (habit_id, day) VALUES (?1, ?2)
+INSERT INTO habit_days (habit_id, day)
+SELECT id, ?1 FROM habits
+WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NULL
 ON CONFLICT (habit_id, day) DO NOTHING
 `
 
 type MarkDayParams struct {
-	HabitID string
 	Day     string
+	HabitID string
+	UserID  sql.NullString
 }
 
 func (q *Queries) MarkDay(ctx context.Context, arg MarkDayParams) error {
-	_, err := q.db.ExecContext(ctx, markDay, arg.HabitID, arg.Day)
+	_, err := q.db.ExecContext(ctx, markDay, arg.Day, arg.HabitID, arg.UserID)
 	return err
 }
 
 const purgeDeletedBefore = `-- name: PurgeDeletedBefore :execrows
 DELETE FROM habits WHERE deleted_at IS NOT NULL AND deleted_at < CAST(?1 AS INTEGER)
+AND user_id IS NOT NULL AND legacy_preserved = 0
 `
 
 func (q *Queries) PurgeDeletedBefore(ctx context.Context, cutoff int64) (int64, error) {
@@ -172,16 +287,35 @@ func (q *Queries) PurgeDeletedBefore(ctx context.Context, cutoff int64) (int64, 
 }
 
 const renameHabit = `-- name: RenameHabit :execrows
-UPDATE habits SET name = ?1 WHERE id = ?2 AND deleted_at IS NULL
+UPDATE habits SET name = ?1
+WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NULL
 `
 
 type RenameHabitParams struct {
-	Name string
-	ID   string
+	Name   string
+	ID     string
+	UserID sql.NullString
 }
 
 func (q *Queries) RenameHabit(ctx context.Context, arg RenameHabitParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, renameHabit, arg.Name, arg.ID)
+	result, err := q.db.ExecContext(ctx, renameHabit, arg.Name, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const resetPassword = `-- name: ResetPassword :execrows
+UPDATE users SET password_hash = ?1 WHERE username = ?2
+`
+
+type ResetPasswordParams struct {
+	PasswordHash string
+	Username     string
+}
+
+func (q *Queries) ResetPassword(ctx context.Context, arg ResetPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resetPassword, arg.PasswordHash, arg.Username)
 	if err != nil {
 		return 0, err
 	}
@@ -189,28 +323,71 @@ func (q *Queries) RenameHabit(ctx context.Context, arg RenameHabitParams) (int64
 }
 
 const restoreHabit = `-- name: RestoreHabit :execrows
-UPDATE habits SET deleted_at = NULL WHERE id = ?1
+UPDATE habits SET deleted_at = NULL, legacy_preserved = 0
+WHERE id = ?1 AND user_id = ?2
 `
 
-func (q *Queries) RestoreHabit(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, restoreHabit, id)
+type RestoreHabitParams struct {
+	ID     string
+	UserID sql.NullString
+}
+
+func (q *Queries) RestoreHabit(ctx context.Context, arg RestoreHabitParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, restoreHabit, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
+const revokeSession = `-- name: RevokeSession :exec
+DELETE FROM sessions WHERE token_hash = ?1
+`
+
+func (q *Queries) RevokeSession(ctx context.Context, tokenHash string) error {
+	_, err := q.db.ExecContext(ctx, revokeSession, tokenHash)
+	return err
+}
+
+const revokeUserSessions = `-- name: RevokeUserSessions :exec
+DELETE FROM sessions WHERE user_id = ?1
+`
+
+func (q *Queries) RevokeUserSessions(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, revokeUserSessions, userID)
+	return err
+}
+
+const sessionUser = `-- name: SessionUser :one
+SELECT u.id, u.username, u.password_hash FROM sessions AS s JOIN users AS u ON u.id = s.user_id
+WHERE s.token_hash = ?1 AND s.expires_at > CAST(?2 AS INTEGER)
+`
+
+type SessionUserParams struct {
+	TokenHash string
+	Now       int64
+}
+
+func (q *Queries) SessionUser(ctx context.Context, arg SessionUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, sessionUser, arg.TokenHash, arg.Now)
+	var i User
+	err := row.Scan(&i.ID, &i.Username, &i.PasswordHash)
+	return i, err
+}
+
 const softDeleteHabit = `-- name: SoftDeleteHabit :execrows
-UPDATE habits SET deleted_at = CAST(?1 AS INTEGER) WHERE id = ?2 AND deleted_at IS NULL
+UPDATE habits SET deleted_at = CAST(?1 AS INTEGER)
+WHERE id = ?2 AND user_id = ?3 AND deleted_at IS NULL
 `
 
 type SoftDeleteHabitParams struct {
 	DeletedAt int64
 	ID        string
+	UserID    sql.NullString
 }
 
 func (q *Queries) SoftDeleteHabit(ctx context.Context, arg SoftDeleteHabitParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, softDeleteHabit, arg.DeletedAt, arg.ID)
+	result, err := q.db.ExecContext(ctx, softDeleteHabit, arg.DeletedAt, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -219,29 +396,33 @@ func (q *Queries) SoftDeleteHabit(ctx context.Context, arg SoftDeleteHabitParams
 
 const unmarkDay = `-- name: UnmarkDay :exec
 DELETE FROM habit_days WHERE habit_id = ?1 AND day = ?2
+AND EXISTS (SELECT 1 FROM habits WHERE id = ?1
+AND user_id = ?3 AND deleted_at IS NULL)
 `
 
 type UnmarkDayParams struct {
 	HabitID string
 	Day     string
+	UserID  sql.NullString
 }
 
 func (q *Queries) UnmarkDay(ctx context.Context, arg UnmarkDayParams) error {
-	_, err := q.db.ExecContext(ctx, unmarkDay, arg.HabitID, arg.Day)
+	_, err := q.db.ExecContext(ctx, unmarkDay, arg.HabitID, arg.Day, arg.UserID)
 	return err
 }
 
 const upsertSetting = `-- name: UpsertSetting :exec
-INSERT INTO settings (key, value) VALUES (?1, ?2)
-ON CONFLICT (key) DO UPDATE SET value = excluded.value
+INSERT INTO settings (user_id, key, value) VALUES (?1, ?2, ?3)
+ON CONFLICT (user_id, key) DO UPDATE SET value = excluded.value
 `
 
 type UpsertSettingParams struct {
-	Key   string
-	Value string
+	UserID string
+	Key    string
+	Value  string
 }
 
 func (q *Queries) UpsertSetting(ctx context.Context, arg UpsertSettingParams) error {
-	_, err := q.db.ExecContext(ctx, upsertSetting, arg.Key, arg.Value)
+	_, err := q.db.ExecContext(ctx, upsertSetting, arg.UserID, arg.Key, arg.Value)
 	return err
 }

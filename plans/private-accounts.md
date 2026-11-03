@@ -385,3 +385,63 @@ T2 limiter bounded-map fixture uses private `loginLimiter.ips map[string]loginWi
 and `loginWindow{started time.Time,attempts int}`. Directly populate live windows
 to exercise fail-closed capacity: the global quota otherwise bounds naturally
 reachable live entries below 1024. This is a resource-bound test seam.
+
+## Iteration 1: frontend authentication fixes
+
+Acceptance validation of `a814baa` upheld three T3 findings: real Chrome logout
+failed to revoke the session, observed expiry did not clear a peer tab, and the
+mandatory timer-cleanup mutation survived. T1 and T2 independent reviews passed.
+No schema, server, CLI or documentation contract changes are required.
+
+### T5: close logout and expiry seams, prove timer cleanup
+
+Exclusive ownership: `web/src/store.ts`, `web/test/store.test.mjs`, regenerated
+`web/dist/store.js`, plus `web/index.html` for the specified login heading.
+Depends on T3. Preserve all existing passing tests and tracker
+behavior. Tests first, save completed RED before editing production.
+
+- Add the missing `Log in` heading using the existing `title` class inside the
+  login form. For login HTTP 429 display exactly `Too many login attempts. Try again later.`;
+  keep generic credentials wording for 401 and existing network-error wording.
+  Add a literal expected-message 429 test.
+- Capture the invocation's current session binding before auth transition cleanup.
+  At a queued auth operation's start, choose this captured binding, falling back
+  to the currently discovered binding from a preceding queued login, before the
+  operation's own transition. For logout only, include `X-Steady-Session` with
+  this expected binding on its POST. Do not discover a replacement session merely
+  to authorize a stale logout; a stale binding must remain stale and receive 401.
+  Login remains cookie-setting POST without a private-request header requirement.
+- Add a strict logout contract regression: fake backend enforces the same cookie
+  plus binding rule as HTTP, a successful logout revokes it, and a fresh Store
+  cannot recover the former session or private data. Assert literal 204/revoked,
+  no display error, empty defaults and anonymous after reload. Exercise serialized
+  login then logout with the binding discovered by that completed login.
+- Centralize authoritative session-loss handling: when a current-generation
+  session/state/mutation/pagehide response is 401, clear private state and announce
+  `{type:'changed'}` on `steady-auth`. A received channel notification only clears
+  locally and never sends a reciprocal message. Old-generation 401 must not clear
+  or notify for a later session. Keep network failures local with existing errors.
+- Add two-Store tests for session/state/mutation/pagehide 401. Both stores must
+  become anonymous with empty habits, week view and default accent, and old
+  pending/queued operations must not dispatch. Count notifications to prove no
+  broadcast loop; assert stale-generation 401 does not invalidate the new user.
+- Strengthen the timer test by tracking actual active debounce resources through
+  test-controlled timer wrappers: one active timer after rename, zero immediately
+  after logout. Keep the no-PATCH assertion. Restore global timer functions in test
+  cleanup. A mutation removing timer cancellation must leave one active resource
+  and fail the test, even though clearing pending names separately prevents PATCH.
+
+Task gates: `cd web && npm run build && npm test`; scoped `git diff --check`.
+RED uses newly added tests against existing compiled store before production edits.
+GREEN regenerates dist. Independent reviewer reruns all three original mutations
+and strict logout/peer-expiry tests on a fresh isolated copy. Mutation commands
+are `cd web && npm run build && npm test`; baseline and mutant must build.
+
+This is a plan correction of acceptance coverage for the two plan-mandated
+findings, with production fixes for logout binding and expiry notification. The
+closed behavior above replaces no original product requirement.
+
+Validator-required coverage correction: "The logout pending-rename test observes
+active debounce handles, proves the handle is removed immediately by logout, and
+fails when the transition's clearTimeout loop is removed even if pending names
+were cleared."

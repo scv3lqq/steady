@@ -100,6 +100,55 @@ function assertAnonymous(store) {
   assert.deepEqual(store.state, EMPTY);
 }
 
+function activeTimers(t) {
+  const originalSet = globalThis.setTimeout;
+  const originalClear = globalThis.clearTimeout;
+  const active = new Set();
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    const timer = originalSet(() => {
+      active.delete(timer);
+      callback(...args);
+    }, delay);
+    active.add(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => {
+    active.delete(timer);
+    originalClear(timer);
+  };
+  t.after(() => {
+    for (const timer of active) originalClear(timer);
+    globalThis.setTimeout = originalSet;
+    globalThis.clearTimeout = originalClear;
+  });
+  return active;
+}
+
+function strictBackend(server) {
+  const backend = { active: true, cookieBinding: A_BINDING, logoutStatuses: [], revoked: false };
+  server.override = ({ path, init }) => {
+    if (path === '/api/login') {
+      backend.active = true;
+      backend.cookieBinding = B_BINDING;
+      server.username = 'bob'; server.binding = B_BINDING; server.privateState = BOB;
+      return response(204);
+    }
+    if (path === '/api/session') {
+      return backend.active ? response(200, { username: server.username, binding: backend.cookieBinding }) : response(401);
+    }
+    const authorized = backend.active && new Headers(init.headers).get('X-Steady-Session') === backend.cookieBinding;
+    if (path === '/api/logout') {
+      const status = !backend.active || authorized ? 204 : 401;
+      backend.logoutStatuses.push(status);
+      if (status === 204) { backend.active = false; backend.revoked = true; }
+      return response(status);
+    }
+    if (!authorized) return response(401);
+    return path === '/api/state' ? response(200, server.privateState) : response(204);
+  };
+  return backend;
+}
+
 test('initial session check precedes private state and an initial 401 keeps defaults', async (t) => {
   const { server } = fixture(t);
   server.sessionStatus = 401;
@@ -240,8 +289,12 @@ test('stale failures cannot decrement new queue counters or trigger a new-user r
 
 test('logout clears pending rename, debounce timer and pagehide flush', async (t) => {
   const { store, server } = await loaded(t);
+  const active = activeTimers(t);
   store.renameHabit('alice-habit', 'Unsent private name');
-  await store.logout();
+  assert.equal(active.size, 1, 'rename owns one live debounce resource');
+  const leaving = store.logout();
+  assert.equal(active.size, 0, 'logout must cancel the resource immediately');
+  await leaving;
   store.flushPending();
   await new Promise((resolve) => setTimeout(resolve, RENAME_DEBOUNCE_MS + 20));
   assertAnonymous(store);
@@ -376,4 +429,144 @@ test('a session response without a valid binding cannot expose private state', a
   await store.load();
   assertAnonymous(store);
   assert.equal(server.calls.some(({ path }) => path === '/api/state'), false);
+});
+
+test('strict backend logout revokes the captured session and reload cannot recover it', async (t) => {
+  const { server } = fixture(t);
+  const backend = strictBackend(server);
+  const store = new Store(() => {});
+  await store.load();
+  await store.logout();
+  assert.deepEqual(backend.logoutStatuses, [204]);
+  assert.equal(backend.revoked, true);
+  assert.equal(backend.active, false);
+  assert.equal(store.auth.error, '');
+  assertAnonymous(store);
+  const reloaded = new Store(() => {});
+  await reloaded.load();
+  assertAnonymous(reloaded);
+  assertAnonymous(store);
+});
+
+test('serialized login then logout uses the binding discovered by that login', async (t) => {
+  const { server } = fixture(t);
+  const backend = strictBackend(server);
+  backend.active = false;
+  const store = new Store(() => {});
+  await store.load();
+  const login = store.login('bob', 'another private password');
+  const logout = store.logout();
+  await Promise.all([login, logout]);
+  const sent = server.calls.find(({ path }) => path === '/api/logout');
+  assert.equal(new Headers(sent.init.headers).get('X-Steady-Session'), B_BINDING);
+  assert.deepEqual(backend.logoutStatuses, [204]);
+  assert.equal(backend.revoked, true);
+  assert.equal(store.auth.error, '');
+  assertAnonymous(store);
+});
+
+test('stale logout keeps its invocation binding and cannot revoke a replacement cookie', async (t) => {
+  const { server } = fixture(t);
+  const backend = strictBackend(server);
+  const store = new Store(() => {});
+  await store.load();
+  backend.cookieBinding = B_BINDING;
+  const discoveries = server.calls.filter(({ path }) => path === '/api/session').length;
+  await store.logout();
+  const sent = server.calls.find(({ path }) => path === '/api/logout');
+  assert.equal(new Headers(sent.init.headers).get('X-Steady-Session'), A_BINDING);
+  assert.deepEqual(backend.logoutStatuses, [401]);
+  assert.equal(backend.active, true);
+  assert.equal(backend.revoked, false);
+  assert.equal(server.calls.filter(({ path }) => path === '/api/session').length, discoveries);
+  assertAnonymous(store);
+});
+
+for (const source of ['session', 'state', 'mutation', 'pagehide']) {
+  test(`${source} 401 clears both tabs and announces once without reciprocal notifications`, async (t) => {
+    const { server } = fixture(t);
+    activeTimers(t);
+    const first = new Store(() => {});
+    const second = new Store(() => {});
+    if (source !== 'session') await first.load();
+    await second.load();
+    const pending = deferred();
+    server.override = ({ path, init }) => {
+      if (path === '/api/settings') return pending.promise;
+      if (source === 'session' && path === '/api/session') return response(401);
+      if (source === 'state' && path === '/api/state') return response(401);
+      if (source === 'mutation' && path.includes('/days/')) return response(401);
+      if (source === 'pagehide' && init.keepalive) return response(401);
+      return undefined;
+    };
+    second.setView('month');
+    second.setAccent('#3FB8B0');
+    second.renameHabit('alice-habit', 'Peer pending private name');
+    await settle();
+    if (source === 'session' || source === 'state') await first.load();
+    else if (source === 'mutation') first.toggleDay('alice-habit', '2026-11-02');
+    else {
+      first.renameHabit('alice-habit', 'Expired pagehide name');
+      first.flushPending();
+    }
+    await settle();
+    assertAnonymous(first);
+    assertAnonymous(second);
+    assert.deepEqual(server.messages, [{ type: 'changed' }]);
+    pending.resolve(response(401));
+    await settle();
+    second.flushPending();
+    await new Promise((resolve) => setTimeout(resolve, RENAME_DEBOUNCE_MS + 20));
+    assert.equal(server.calls.filter(({ path }) => path === '/api/settings').length, 1);
+    assert.equal(server.calls.some(({ init }) => init.method === 'PATCH' && !init.keepalive), false);
+    assert.deepEqual(server.messages, [{ type: 'changed' }], 'old peer response cannot rebroadcast');
+  });
+
+  test(`stale ${source} 401 cannot invalidate or notify for a later user`, async (t) => {
+    const { server, invalidate } = fixture(t);
+    const first = new Store(() => {});
+    if (source !== 'session') await first.load();
+    const late = deferred();
+    let intercepted = false;
+    server.override = ({ path, init }) => {
+      const match = source === 'session' ? path === '/api/session' :
+        source === 'state' ? path === '/api/state' :
+          source === 'mutation' ? path.includes('/days/') : init.keepalive;
+      if (intercepted || !match) return undefined;
+      intercepted = true;
+      return late.promise;
+    };
+    let loading;
+    if (source === 'session' || source === 'state') loading = first.load();
+    else if (source === 'mutation') first.toggleDay('alice-habit', '2026-11-02');
+    else {
+      first.renameHabit('alice-habit', 'Old pagehide name');
+      first.flushPending();
+    }
+    await settle();
+    invalidate();
+    server.username = 'bob'; server.binding = B_BINDING; server.privateState = BOB;
+    await first.load();
+    const peer = new Store(() => {});
+    await peer.load();
+    late.resolve(response(401));
+    if (loading !== undefined) await loading;
+    await settle();
+    assert.equal(first.auth.status, 'authenticated');
+    assert.equal(peer.auth.status, 'authenticated');
+    assert.equal(first.state.habits[0].name, 'Bob private habit');
+    assert.equal(peer.state.habits[0].name, 'Bob private habit');
+    assert.deepEqual(server.messages, []);
+  });
+}
+
+test('login 429 displays the specified retry-later message', async (t) => {
+  const { server } = fixture(t);
+  server.sessionStatus = 401;
+  server.override = ({ path }) => path === '/api/login' ? response(429) : undefined;
+  const store = new Store(() => {});
+  await store.load();
+  await store.login('alice', 'a private password');
+  assertAnonymous(store);
+  assert.equal(store.auth.error, 'Too many login attempts. Try again later.');
 });

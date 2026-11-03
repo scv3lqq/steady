@@ -152,25 +152,40 @@ export class Store {
     return tracked;
   }
 
+  #sessionLost(generation: number): void {
+    if (generation !== this.#generation) return;
+    this.#transition('anonymous');
+    this.#channel.postMessage({ type: 'changed' });
+  }
+
   async #waitForData(): Promise<void> {
     while (this.#data.size > 0) await Promise.allSettled([...this.#data]);
   }
 
   #authenticate(path: string, body?: unknown): Promise<void> {
+    const invocationBinding = this.#binding;
     this.#authPending += 1;
     this.#transition('anonymous');
     this.#channel.postMessage({ type: 'changed' });
     const run = this.#authQueue.then(async () => {
+      // A queued logout may follow a login that discovered its binding after this invocation.
+      const expectedBinding = invocationBinding || this.#binding;
       this.#transition('anonymous');
       // A fetch may ignore abort until its response/body settles. Do not replace its cookie yet.
       await this.#waitForData();
       const generation = this.#generation;
       try {
-        const res = await fetch(path, requestInit('POST', body));
+        const init = requestInit('POST', body);
+        if (path === '/api/logout') init.headers = { 'X-Steady-Session': expectedBinding };
+        const res = await fetch(path, init);
         this.#channel.postMessage({ type: 'changed' });
         if (generation !== this.#generation) return;
         if (!res.ok) {
-          this.#auth.error = path === '/api/login' ? 'Unable to log in. Check your credentials and try again.' : 'Unable to log out. Try again.';
+          if (path === '/api/login' && res.status === 429) {
+            this.#auth.error = 'Too many login attempts. Try again later.';
+          } else {
+            this.#auth.error = path === '/api/login' ? 'Unable to log in. Check your credentials and try again.' : 'Unable to log out. Try again.';
+          }
         } else if (path === '/api/login') {
           await this.#track(this.#checkSession(generation));
         }
@@ -191,8 +206,10 @@ export class Store {
       const res = await fetch('/api/session', { signal: this.#controller.signal });
       if (generation !== this.#generation) return;
       if (!res.ok) {
-        this.#transition('anonymous');
-        if (res.status !== 401) {
+        if (res.status === 401) {
+          this.#sessionLost(generation);
+        } else {
+          this.#transition('anonymous');
           this.#auth.error = 'Unable to check your session. Try again.';
           this.#onChange();
         }
@@ -226,7 +243,7 @@ export class Store {
       const res = await fetch('/api/state', this.#privateInit('GET'));
       if (generation !== this.#generation) return;
       if (res.status === 401) {
-        this.#transition('anonymous');
+        this.#sessionLost(generation);
         return;
       }
       if (!res.ok) {
@@ -392,7 +409,7 @@ export class Store {
   async #flush(path: string, init: RequestInit, generation: number): Promise<void> {
     try {
       const res = await fetch(path, init);
-      if (generation === this.#generation && res.status === 401) this.#transition('anonymous');
+      if (res.status === 401) this.#sessionLost(generation);
     } catch {
       // The page is closing; abort and network failures cannot be recovered here.
     }
@@ -403,7 +420,7 @@ export class Store {
       const res = await fetch(path, init);
       if (generation !== this.#generation) return;
       if (res.status === 401) {
-        this.#transition('anonymous');
+        this.#sessionLost(generation);
         return;
       }
       if (!res.ok) {

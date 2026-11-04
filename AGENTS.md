@@ -38,6 +38,7 @@ Generated code is committed: `web/dist/` (so `go build` and `go install` need on
 - Authentication tests for changed flows must enforce the actual HTTP cookie, binding-header and status contract in their doubles. Confirm login, state loading, logout/reload and peer-tab expiry against the real handler; a mocked success response alone does not prove session revocation.
 - Source files contain no literal em dash (U+2014). Where the UI needs one, build it with `String.fromCharCode(0x2014)`.
 - Commits: Conventional Commits, imperative mood, subject at most 72 characters, signed. Trunk-based: short-lived branches off `main`.
+- Finish verified work by merging into `main` and pushing it without another approval pause. Check the resulting CI, then delete all non-`main` local and `origin` branches in this repository. Do not leave a draft PR as the completed result.
 - Public-ready: English only; no personal hosts, IPs, domains or home paths anywhere in the repo.
 
 ## Setup, deployment and data safety

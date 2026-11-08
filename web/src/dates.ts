@@ -12,6 +12,11 @@ const shortFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'num
 const longFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' });
 const monthYearFormat = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' });
 const weekdayFormat = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+const lineDateFormat = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
 
 export function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -103,4 +108,22 @@ export function formatMonthYear(d: Date): string {
 
 export function weekdayShort(d: Date): string {
   return weekdayFormat.format(d).slice(0, 2);
+}
+
+// The dates line of a habit. Created is left out when the creation time is unknown. Started is
+// the earliest marked day, which can precede Created because past days can be marked.
+export function habitDatesText(createdAt: number | null, doneKeys: readonly string[]): string {
+  const parts: string[] = [];
+  if (createdAt !== null) {
+    parts.push(`Created ${lineDateFormat.format(new Date(createdAt * 1000))}`);
+  }
+  if (doneKeys.length === 0) {
+    parts.push('Not started');
+  } else {
+    // The keys come from an object, so their order says nothing about the dates. Zero-padded
+    // YYYY-MM-DD keys sort as strings in calendar order.
+    const earliest = doneKeys.reduce((min, key) => (key < min ? key : min));
+    parts.push(`Started ${lineDateFormat.format(fromKey(earliest))}`);
+  }
+  return parts.join(' · ');
 }

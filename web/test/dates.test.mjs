@@ -153,3 +153,29 @@ test('formatters', () => {
   assert.equal(d.weekdayShort(new Date(2026, 9, 29)), 'Th');
   assert.equal(d.weekdayShort(new Date(2026, 10, 1)), 'Su');
 });
+
+test('habitDatesText', () => {
+  // 03:00 UTC on Nov 8 is still the evening of Nov 7 in New York, so a UTC formatter would
+  // print the 8th.
+  const created = 1794106800;
+  const cases = [
+    {
+      createdAt: created,
+      keys: ['2026-11-10', '2026-11-12'],
+      want: 'Created Nov 7, 2026 · Started Nov 10, 2026',
+    },
+    // The earliest key wins wherever it sits in the list.
+    {
+      createdAt: created,
+      keys: ['2026-11-12', '2026-11-10'],
+      want: 'Created Nov 7, 2026 · Started Nov 10, 2026',
+    },
+    { createdAt: created, keys: [], want: 'Created Nov 7, 2026 · Not started' },
+    // A habit that predates the column has no creation time.
+    { createdAt: null, keys: ['2025-11-03'], want: 'Started Nov 3, 2025' },
+    { createdAt: null, keys: [], want: 'Not started' },
+  ];
+  for (const { createdAt, keys, want } of cases) {
+    assert.equal(d.habitDatesText(createdAt, keys), want, `${createdAt} [${keys}]`);
+  }
+});

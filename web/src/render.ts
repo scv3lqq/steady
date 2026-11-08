@@ -6,6 +6,7 @@ import {
   formatLongDate,
   formatMonthYear,
   formatShortDate,
+  habitDatesText,
   lastNDays,
   pluralDays,
   streak,
@@ -227,17 +228,18 @@ function createRow(view: View, id: string): HTMLElement {
   const name = createNameInput(id);
   const del = createDeleteButton(id);
   const grid = create('div', spec.gridClass);
+  const dates = create('div', 'habit-dates');
   if (view === 'week') {
     const side = create('div', 'side');
     side.append(create('span', 'streak'), del);
-    row.append(name, grid, side);
+    row.append(name, grid, side, dates);
     return row;
   }
   const head = create('div', 'block-head');
   head.append(name, create('span', 'count'), del);
   const caption = create('div', 'caption');
   caption.append(create('span'), create('span', undefined, 'today'));
-  row.append(head, grid, caption);
+  row.append(head, dates, grid, caption);
   return row;
 }
 
@@ -268,6 +270,7 @@ function updateRow(row: HTMLElement, habit: Habit, frame: Frame): void {
     input.value = habit.name;
   }
   setAttr(required(row, 'button.del'), 'aria-label', `Delete ${habit.name}`);
+  setText(required(row, '.habit-dates'), habitDatesText(habit.createdAt, Object.keys(habit.done)));
 
   if (frame.view === 'week') {
     const run = streak(habit.done, frame.now);

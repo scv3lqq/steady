@@ -533,6 +533,17 @@ button:disabled {
   color: var(--faint);
 }
 
+.habit-dates {
+  flex: 0 0 100%;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+[data-view='month'] .habit-dates,
+[data-view='year'] .habit-dates {
+  margin-bottom: 10px;
+}
+
 .empty {
   display: flex;
   flex-direction: column;

@@ -40,11 +40,13 @@ type Options struct {
 	AllowedHosts []string
 }
 
-// habitDTO is a habit on the wire; Done is always an array.
+// habitDTO is a habit on the wire; Done is always an array and CreatedAt is Unix seconds, or null when the creation
+// time is unknown.
 type habitDTO struct {
-	ID   string   `json:"id"`
-	Name string   `json:"name"`
-	Done []string `json:"done"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Done      []string `json:"done"`
+	CreatedAt *int64   `json:"createdAt"`
 }
 
 // stateDTO is the body of GET /api/state; Habits is always an array.
@@ -295,7 +297,12 @@ func newHabitDTO(h domain.Habit) habitDTO {
 	if done == nil {
 		done = []string{}
 	}
-	return habitDTO{ID: h.ID, Name: h.Name, Done: done}
+	dto := habitDTO{ID: h.ID, Name: h.Name, Done: done}
+	if !h.CreatedAt.IsZero() {
+		createdAt := h.CreatedAt.Unix()
+		dto.CreatedAt = &createdAt
+	}
+	return dto
 }
 
 func newStateDTO(st domain.State) stateDTO {

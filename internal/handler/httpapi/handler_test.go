@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -163,13 +164,20 @@ func createBody(id, name string) string {
 	return `{"id":"` + id + `","name":"` + name + `"}`
 }
 
-// habitJSON is a habit as the API writes it; done lists its day keys.
-func habitJSON(id, name string, done ...string) string {
+// habitJSONWith is a habit as the API writes it; createdAt is the raw JSON literal of its creation time and done
+// lists its day keys.
+func habitJSONWith(createdAt, id, name string, done ...string) string {
 	days := make([]string, 0, len(done))
 	for _, day := range done {
 		days = append(days, `"`+day+`"`)
 	}
-	return `{"id":"` + id + `","name":"` + name + `","done":[` + strings.Join(days, ",") + `]}`
+	return `{"id":"` + id + `","name":"` + name + `","done":[` + strings.Join(days, ",") + `],"createdAt":` + createdAt + `}`
+}
+
+// habitJSON is a habit created at fixedNow, the clock of the standard test server, as the API writes it; done lists
+// its day keys.
+func habitJSON(id, name string, done ...string) string {
+	return habitJSONWith(strconv.FormatInt(fixedNow().Unix(), 10), id, name, done...)
 }
 
 // stateJSON is the body of GET /api/state.

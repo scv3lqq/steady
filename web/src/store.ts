@@ -3,6 +3,7 @@ export type View = 'week' | 'month' | 'year';
 export interface Habit {
   id: string;
   name: string;
+  createdAt: number | null;
   done: Record<string, true>;
 }
 
@@ -43,6 +44,7 @@ const DEFAULT_NAME = 'Untitled';
 interface ApiHabit {
   id: string;
   name: string;
+  createdAt: number | null;
   done: string[];
 }
 
@@ -88,7 +90,7 @@ function toDone(days: readonly string[]): Record<string, true> {
 
 function toState(api: ApiState): State {
   return {
-    habits: api.habits.map((h) => ({ id: h.id, name: h.name, done: toDone(h.done) })),
+    habits: api.habits.map((h) => ({ id: h.id, name: h.name, createdAt: h.createdAt, done: toDone(h.done) })),
     view: api.view,
     accent: api.accent,
   };
@@ -322,7 +324,7 @@ export class Store {
     if (this.#auth.status !== 'authenticated') return;
     const id = crypto.randomUUID();
     this.#revision += 1;
-    this.#state.habits.push({ id, name, done: {} });
+    this.#state.habits.push({ id, name, createdAt: Math.floor(Date.now() / 1000), done: {} });
     this.#onChange();
     this.#enqueue('POST', '/api/habits', { id, name });
   }

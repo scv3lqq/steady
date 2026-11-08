@@ -4,12 +4,12 @@ import { Store, RENAME_DEBOUNCE_MS } from '../dist/store.js';
 
 const EMPTY = { habits: [], view: 'week', accent: '#4FA872' };
 const ALICE = {
-  habits: [{ id: 'alice-habit', name: 'Alice private habit', done: ['2026-11-03'] }],
+  habits: [{ id: 'alice-habit', name: 'Alice private habit', createdAt: 1793525400, done: ['2026-11-03'] }],
   view: 'year',
   accent: '#E07BB0',
 };
 const BOB = {
-  habits: [{ id: 'bob-habit', name: 'Bob private habit', done: [] }],
+  habits: [{ id: 'bob-habit', name: 'Bob private habit', createdAt: null, done: [] }],
   view: 'month',
   accent: '#5B8CEB',
 };
@@ -977,4 +977,41 @@ test('an old-generation pagehide completion cannot release a new-generation pend
   await store.refresh();
   assert.equal(store.state.habits[0].name, 'Still typing after wake');
   assert.equal(store.state.accent, '#3FB8B0', 'new flush completion must release exactly its own accounting');
+});
+
+for (const [owner, account, want] of [['alice', ALICE, 1793525400], ['bob', BOB, null]]) {
+  test(`state load keeps the API createdAt of ${owner}'s habit`, async (t) => {
+    const { server } = fixture(t);
+    server.privateState = account;
+    const store = new Store(() => {});
+    await store.load();
+    assert.equal(store.state.habits.length, 1);
+    assert.equal(store.state.habits[0].createdAt, want);
+  });
+}
+
+test('addHabit stamps createdAt in whole seconds and posts only id and name', async (t) => {
+  const { store, server } = await loaded(t);
+  const before = Math.floor(Date.now() / 1000);
+  store.addHabit('Fresh habit');
+  const after = Math.floor(Date.now() / 1000);
+  await settle();
+  const added = store.state.habits.at(-1);
+  assert.equal(added.name, 'Fresh habit');
+  assert.ok(Number.isInteger(added.createdAt), `createdAt ${added.createdAt} is not an integer`);
+  assert.ok(added.createdAt >= before && added.createdAt <= after, `${added.createdAt} outside ${before}..${after}`);
+  const [post] = mutations(server);
+  assert.equal(post.path, '/api/habits');
+  assert.deepEqual(JSON.parse(post.init.body), { id: added.id, name: 'Fresh habit' });
+});
+
+test('delete then undo leaves the habit createdAt unchanged', async (t) => {
+  const { store } = await loaded(t);
+  assert.equal(store.state.habits[0].createdAt, 1793525400);
+  const deleted = store.deleteHabit('alice-habit');
+  assert.deepEqual(store.state.habits, []);
+  store.restoreHabit(deleted);
+  await settle();
+  assert.equal(store.state.habits[0].id, 'alice-habit');
+  assert.equal(store.state.habits[0].createdAt, 1793525400);
 });

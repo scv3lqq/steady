@@ -46,7 +46,7 @@ function toDone(days) {
 }
 function toState(api) {
     return {
-        habits: api.habits.map((h) => ({ id: h.id, name: h.name, done: toDone(h.done) })),
+        habits: api.habits.map((h) => ({ id: h.id, name: h.name, createdAt: h.createdAt, done: toDone(h.done) })),
         view: api.view,
         accent: api.accent,
     };
@@ -287,7 +287,7 @@ export class Store {
             return;
         const id = crypto.randomUUID();
         this.#revision += 1;
-        this.#state.habits.push({ id, name, done: {} });
+        this.#state.habits.push({ id, name, createdAt: Math.floor(Date.now() / 1000), done: {} });
         this.#onChange();
         this.#enqueue('POST', '/api/habits', { id, name });
     }

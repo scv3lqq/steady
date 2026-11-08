@@ -65,7 +65,7 @@ The frontend talks to this JSON API. All habit and settings routes require a val
 | `POST /api/login` | Accepts `{"username":"...","password":"..."}`, creates a session cookie and answers 204; invalid credentials receive a generic 401. |
 | `POST /api/logout` | Revokes the current session and clears the cookie (204); no valid session is also 204. |
 | `GET /api/session` | Returns `{"username":"...","binding":"<sha256-hex>"}` for the validated cookie session, otherwise 401; this discovery request does not require the binding header. |
-| `GET /api/state` | Returns the current user's habits with their done days, plus their saved `view` and `accent`. |
+| `GET /api/state` | Returns the current user's habits with their done days and `createdAt` (Unix seconds, `null` when unknown), plus their saved `view` and `accent`. |
 | `POST /api/habits` | Creates a habit from `{"id": "<uuid>", "name": "..."}` and answers 201; a taken id is 409. |
 | `PATCH /api/habits/{id}` | Renames a habit from `{"name": "..."}`; `name` is required. |
 | `DELETE /api/habits/{id}` | Soft-deletes a habit, so that it can be restored (204). |

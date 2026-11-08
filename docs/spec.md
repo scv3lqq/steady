@@ -48,14 +48,17 @@ A centered column, `max-width: 600px`, padding `56px 20px 96px`, vertical gap 36
      - Inline-editable name input (17px, transparent, 1px ink underline on focus). Saving happens on input; an empty name on blur becomes `Untitled`.
      - 7 squares, 34×34, 6px gap. Done = accent fill + accent border + check icon. Today, not done = `--surface` fill + 1.5px ink border. Past, not done = transparent + `--cell-border`. Clicking toggles the day.
      - Right side (84px): the streak (`5 days`, ink when > 0, an em dash (U+2014), faint, when 0), then a × delete button (32×32, faint; hover `--hover` / ink).
+     - Full-width dates line (11px, faint), the last item of the row. See **Habit dates** under Data and logic.
 
 4. **List: Month view (last 30 days)**
    - Each habit is a block with a top border and 16px/18px padding. Top line: name input, the count `18 of 30` (13px, muted), then ×.
+   - Directly below the top line, the same dates line as the Week view.
    - Below it, a grid of `repeat(30, minmax(0,1fr))` with a 4px gap holding round dots (`aspect-ratio: 1`). Done = accent, otherwise `--empty`; today gets an inset 1.5px ink ring. Clicking toggles the day.
    - Caption row (11px, faint, space-between): the start date `Oct 3` and `today`.
 
 5. **List: Year view (GitHub-style, 53 weeks)**
    - Same block header, with the count `214 days`.
+   - Directly below the header, the same dates line as the Week view.
    - Grid: `grid-template-columns: repeat(53, minmax(0,1fr)); grid-template-rows: repeat(7, auto); grid-auto-flow: column; gap: 3px`. Columns are weeks and rows run Monday→Sunday. The last column is the current week; cells after today are `visibility: hidden` and disabled. Squares are radius 2px; today gets an inset 1px ink ring. Clicking toggles the day.
    - Caption: `November 2025` … `today`.
 
@@ -70,7 +73,7 @@ A centered column, `max-width: 600px`, padding `56px 20px 96px`, vertical gap 36
 
 ## Data and logic
 ```ts
-type Habit = { id: string; name: string; done: Record<string, true> }; // keys: local "YYYY-MM-DD"
+type Habit = { id: string; name: string; createdAt: number | null; done: Record<string, true> }; // createdAt: Unix seconds, null when unknown; keys: local "YYYY-MM-DD"
 ```
 - Persistence: see Deviations (SQLite via the JSON API).
 - Dates use the **local timezone**: build keys from `getFullYear/getMonth/getDate`, never `toISOString`.
@@ -79,6 +82,8 @@ type Habit = { id: string; name: string; done: Record<string, true> }; // keys: 
 - New accounts start with no habits, view `week` and accent `#4FA872`. Do not seed demo habits or history. Historical screenshots contain made-up demonstration data.
 - Re-render on every change. Don't rebuild the input that has focus: patch in place, or skip the name input while it's focused, so the caret doesn't jump while the user types. Defer a remote view change until the focused habit name loses focus.
 - Poll the authenticated account state every 3 seconds while visible (20 periodic reads per minute per visible tab, plus immediate wake checks), so remote changes appear within 5 seconds with a responsive server. Pause hidden tabs. Check immediately on visibility restoration, focus, online, pageshow and resume; coalesce concurrent triggers and bound reads to 4 seconds. Keep optimistic writes, pending names, input drafts and Undo. Reject snapshots started during writes or before a newer local edit, even after the write queue drains; within one account, the last successfully saved day operation wins.
+
+**Habit dates.** One line reads `Created Nov 8, 2026 · Started Nov 10, 2026`. `Created` is the server's creation time in the browser's local time zone; it is omitted when `createdAt` is `null`, which marks a habit older than this field. `Started` is the earliest marked day: it moves when that mark changes and can precede `Created`, because past days can be marked. With no marks the second part reads `Not started`.
 
 ## Accessibility
 - Every interactive element is a real `<button>` or `<input>`.
@@ -107,6 +112,7 @@ type Habit = { id: string; name: string; done: Record<string, true> }; // keys: 
 - `npm run build` passes with zero TS errors, and the app served by the Go binary has no console errors.
 - Inspect the favicon at 16x16 and 32x32 for legibility. Before reporting that it appears in a browser tab, verify the tab itself; successful SVG decoding or an in-page preview alone does not prove browser icon selection.
 - Add, rename, delete + undo, toggling a day in all three views, switching views and changing the accent all work and survive a reload for the authenticated user.
+- Each habit shows its dates line in all three views. Marking an earlier day or clearing the earliest mark updates `Started` at once, and the line causes no horizontal scroll at 320px wide.
 - Login, logout, errors and tracker controls have no horizontal scroll at 320px wide.
 - Automated tests cover legacy migration/bootstrap retries, CLI create/duplicates/reset, login success/failure, restart persistence, expiry, revocation, rate limits, unauthenticated access, cross-origin rejection and two-user isolation for every read/mutation route, including direct foreign habit IDs.
 - Frontend tests prove private state clearing, abandoned queues and late responses cannot contaminate a later login, including two-tab cookie changes, stale bindings and broadcast authentication transitions. Cover independent clients, conflicting marks, delayed snapshots after queued writes finish, pending names, hidden tabs, wake/reconnect, timer coalescing and transient outages. Real HTTP tests close and reopen the server and the same SQLite file, replay the identical cookie/binding without renewal, and verify logout/reset/absolute expiry using session discovery without a binding header. Independently verify a complete two-user workflow and run `make check`, including generated-code freshness.

@@ -990,6 +990,17 @@ for (const [owner, account, want] of [['alice', ALICE, 1793525400], ['bob', BOB,
   });
 }
 
+test('state load treats a habit without createdAt from an older server as unknown', async (t) => {
+  const { server } = fixture(t);
+  const legacy = { ...ALICE.habits[0] };
+  delete legacy.createdAt;
+  server.privateState = { ...ALICE, habits: [legacy] };
+  const store = new Store(() => {});
+  await store.load();
+  assert.equal(store.state.habits.length, 1);
+  assert.equal(store.state.habits[0].createdAt, null);
+});
+
 test('addHabit stamps createdAt in whole seconds and posts only id and name', async (t) => {
   const { store, server } = await loaded(t);
   const before = Math.floor(Date.now() / 1000);

@@ -46,7 +46,7 @@ function toDone(days) {
 }
 function toState(api) {
     return {
-        habits: api.habits.map((h) => ({ id: h.id, name: h.name, createdAt: h.createdAt, done: toDone(h.done) })),
+        habits: api.habits.map((h) => ({ id: h.id, name: h.name, createdAt: h.createdAt ?? null, done: toDone(h.done) })),
         view: api.view,
         accent: api.accent,
     };

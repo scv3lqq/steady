@@ -19,6 +19,9 @@ const (
 	idD       = "00000000-0000-4000-8000-00000000000d"
 )
 
+// testCreatedAt is the creation time that mustAdd and the direct AddHabit calls below give a new habit.
+var testCreatedAt = time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
+
 func newStore(t *testing.T) *Store {
 	t.Helper()
 	s, err := Open(t.Context(), filepath.Join(t.TempDir(), "steady.db"))
@@ -47,7 +50,7 @@ func mustState(t *testing.T, s *Store) domain.State {
 
 func mustAdd(t *testing.T, s *Store, id, name string) {
 	t.Helper()
-	if err := s.AddHabit(t.Context(), testOwner, id, name); err != nil {
+	if err := s.AddHabit(t.Context(), testOwner, id, name, testCreatedAt); err != nil {
 		t.Fatalf("AddHabit(%s, %q): %v", id, name, err)
 	}
 }
@@ -146,7 +149,7 @@ func TestAddHabitOrderAndConflict(t *testing.T) {
 		}
 	}
 
-	if err := s.AddHabit(t.Context(), testOwner, idA, "Alpha"); !errors.Is(err, domain.ErrExists) {
+	if err := s.AddHabit(t.Context(), testOwner, idA, "Alpha", testCreatedAt); !errors.Is(err, domain.ErrExists) {
 		t.Errorf("AddHabit(A again) error = %v, want %v", err, domain.ErrExists)
 	}
 

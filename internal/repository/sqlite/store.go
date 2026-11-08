@@ -126,7 +126,7 @@ func (s *Store) State(ctx context.Context, userID string) (domain.State, error) 
 		if done == nil {
 			done = []string{}
 		}
-		state.Habits = append(state.Habits, domain.Habit{ID: h.ID, Name: h.Name, Done: done})
+		state.Habits = append(state.Habits, domain.Habit{ID: h.ID, Name: h.Name, CreatedAt: createdAtTime(h.CreatedAt), Done: done})
 	}
 	return state, nil
 }
@@ -145,10 +145,24 @@ func accentOrDefault(stored string) string {
 	return domain.DefaultAccent
 }
 
-// AddHabit appends a habit after the last one, deleted ones included. It returns domain.ErrExists when the id
-// is taken, also by a soft-deleted habit.
-func (s *Store) AddHabit(ctx context.Context, userID, id, name string) error {
-	n, err := s.q.InsertHabit(ctx, sqlcdb.InsertHabitParams{UserID: ownerID(userID), ID: id, Name: name})
+// createdAtTime reads the nullable created_at column. NULL means the habit predates creation tracking, which the
+// domain spells as the zero time.
+func createdAtTime(v sql.NullInt64) time.Time {
+	if !v.Valid {
+		return time.Time{}
+	}
+	return time.Unix(v.Int64, 0).UTC()
+}
+
+// AddHabit appends a habit after the last one, deleted ones included, and records createdAt as its creation
+// time in whole seconds. It returns domain.ErrExists when the id is taken, also by a soft-deleted habit.
+func (s *Store) AddHabit(ctx context.Context, userID, id, name string, createdAt time.Time) error {
+	n, err := s.q.InsertHabit(ctx, sqlcdb.InsertHabitParams{
+		UserID:    ownerID(userID),
+		ID:        id,
+		Name:      name,
+		CreatedAt: sql.NullInt64{Int64: createdAt.Unix(), Valid: true},
+	})
 	if err != nil {
 		return fmt.Errorf("add habit %s: %w", id, err)
 	}

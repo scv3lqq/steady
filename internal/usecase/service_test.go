@@ -21,7 +21,8 @@ const testID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 // compares the whole conversation with a literal slice: the order of the calls and the absence of a call
 // are checked the same way as an argument.
 type fakeRepo struct {
-	calls []string
+	calls   []string
+	addedAt time.Time // creation time passed to the last AddHabit
 
 	deleteErr error // returned by DeleteHabit
 	purgeErr  error // returned by PurgeDeleted
@@ -32,8 +33,9 @@ func (r *fakeRepo) State(_ context.Context, userID string) (domain.State, error)
 	return domain.State{}, nil
 }
 
-func (r *fakeRepo) AddHabit(_ context.Context, userID string, id, name string) error {
+func (r *fakeRepo) AddHabit(_ context.Context, userID string, id, name string, createdAt time.Time) error {
 	r.calls = append(r.calls, fmt.Sprintf("AddHabit(%q, %q, %q)", userID, id, name))
+	r.addedAt = createdAt
 	return nil
 }
 
@@ -102,12 +104,13 @@ func checkCalls(t *testing.T, got, want []string) {
 
 func TestAddHabit(t *testing.T) {
 	tests := []struct {
-		name      string
-		id        string
-		habitName string
-		want      domain.Habit
-		wantErr   error
-		wantCalls []string
+		name        string
+		id          string
+		habitName   string
+		want        domain.Habit
+		wantErr     error
+		wantCalls   []string
+		wantAddedAt time.Time // stays zero while the repository is never reached
 	}{
 		{
 			name:      "bad id never reaches the repository",
@@ -116,11 +119,12 @@ func TestAddHabit(t *testing.T) {
 			wantErr:   domain.ErrInvalidID,
 		},
 		{
-			name:      "name is trimmed before it is stored",
-			id:        testID,
-			habitName: "  Read ",
-			want:      domain.Habit{ID: testID, Name: "Read", Done: []string{}},
-			wantCalls: []string{`AddHabit("owner-a", "0f8fad5b-d9cb-469f-a165-70867728950e", "Read")`},
+			name:        "name is trimmed before it is stored",
+			id:          testID,
+			habitName:   "  Read ",
+			want:        domain.Habit{ID: testID, Name: "Read", CreatedAt: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC), Done: []string{}},
+			wantCalls:   []string{`AddHabit("owner-a", "0f8fad5b-d9cb-469f-a165-70867728950e", "Read")`},
+			wantAddedAt: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC),
 		},
 	}
 	for _, tc := range tests {
@@ -135,6 +139,9 @@ func TestAddHabit(t *testing.T) {
 			// DeepEqual tells a nil Done from an empty one, and the client gets null for the first and [] for the second.
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("AddHabit(%q, %q) = %#v, want %#v", tc.id, tc.habitName, got, tc.want)
+			}
+			if !repo.addedAt.Equal(tc.wantAddedAt) {
+				t.Errorf("AddHabit(%q, %q) stored creation time %s, want %s", tc.id, tc.habitName, stamp(repo.addedAt), stamp(tc.wantAddedAt))
 			}
 			checkCalls(t, repo.calls, tc.wantCalls)
 		})

@@ -232,6 +232,7 @@ func TestOwnershipForEveryMutationAndSettings(t *testing.T) {
 	s := newStore(t)
 	account(t, s, otherOwner, "other")
 	ctx := t.Context()
+	createdAt := time.Date(2026, 11, 1, 9, 30, 0, 0, time.UTC)
 	mustAdd(t, s, idA, "Private")
 	mustSetDay(t, s, idA, "2026-10-31", true)
 	cases := []struct {
@@ -251,10 +252,10 @@ func TestOwnershipForEveryMutationAndSettings(t *testing.T) {
 			}
 		})
 	}
-	if err := s.AddHabit(ctx, otherOwner, idA, "duplicate global ID"); !errors.Is(err, domain.ErrExists) {
+	if err := s.AddHabit(ctx, otherOwner, idA, "duplicate global ID", createdAt); !errors.Is(err, domain.ErrExists) {
 		t.Fatalf("global ID uniqueness = %v", err)
 	}
-	if err := s.AddHabit(ctx, otherOwner, idB, "Other"); err != nil {
+	if err := s.AddHabit(ctx, otherOwner, idB, "Other", createdAt); err != nil {
 		t.Fatal(err)
 	}
 	mustAdd(t, s, idC, "Second private")

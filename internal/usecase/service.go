@@ -19,12 +19,12 @@ const PurgeAfter = 24 * time.Hour
 // domain.ErrNotFound and a taken id as domain.ErrExists, wrapped or not.
 type Repository interface {
 	State(ctx context.Context, userID string) (domain.State, error)
-	AddHabit(ctx context.Context, userID, id, name string) error            // domain.ErrExists when the id is taken (also by a soft-deleted row)
-	RenameHabit(ctx context.Context, userID, id, name string) error         // domain.ErrNotFound when no active row
-	DeleteHabit(ctx context.Context, userID, id string, at time.Time) error // soft delete; domain.ErrNotFound when no active row
-	RestoreHabit(ctx context.Context, userID, id string) error              // domain.ErrNotFound when the row is gone (idempotent on an active row)
-	PurgeDeleted(ctx context.Context, before time.Time) (int64, error)      // hard-deletes rows with deleted_at < before.Unix()
-	SetDay(ctx context.Context, userID, id, day string, done bool) error    // domain.ErrNotFound when no active row
+	AddHabit(ctx context.Context, userID, id, name string, createdAt time.Time) error // domain.ErrExists when the id is taken (also by a soft-deleted row)
+	RenameHabit(ctx context.Context, userID, id, name string) error                   // domain.ErrNotFound when no active row
+	DeleteHabit(ctx context.Context, userID, id string, at time.Time) error           // soft delete; domain.ErrNotFound when no active row
+	RestoreHabit(ctx context.Context, userID, id string) error                        // domain.ErrNotFound when the row is gone (idempotent on an active row)
+	PurgeDeleted(ctx context.Context, before time.Time) (int64, error)                // hard-deletes rows with deleted_at < before.Unix()
+	SetDay(ctx context.Context, userID, id, day string, done bool) error              // domain.ErrNotFound when no active row
 	UpdateSettings(ctx context.Context, userID string, u domain.SettingsUpdate) error
 	Ping(ctx context.Context) error
 }
@@ -50,7 +50,8 @@ func (s *Service) State(ctx context.Context, userID string) (domain.State, error
 	return st, nil
 }
 
-// AddHabit stores a new habit and returns it with an empty, non-nil Done. A blank name becomes domain.DefaultName.
+// AddHabit stores a new habit created at the current time and returns it with an empty, non-nil Done.
+// A blank name becomes domain.DefaultName.
 func (s *Service) AddHabit(ctx context.Context, userID, id, name string) (domain.Habit, error) {
 	if err := domain.ValidateID(id); err != nil {
 		return domain.Habit{}, fmt.Errorf("add habit: %w", err)
@@ -59,10 +60,11 @@ func (s *Service) AddHabit(ctx context.Context, userID, id, name string) (domain
 	if err != nil {
 		return domain.Habit{}, fmt.Errorf("add habit: %w", err)
 	}
-	if err = s.repo.AddHabit(ctx, userID, id, norm); err != nil {
+	createdAt := s.now()
+	if err = s.repo.AddHabit(ctx, userID, id, norm, createdAt); err != nil {
 		return domain.Habit{}, fmt.Errorf("add habit: %w", err)
 	}
-	return domain.Habit{ID: id, Name: norm, Done: []string{}}, nil
+	return domain.Habit{ID: id, Name: norm, CreatedAt: createdAt, Done: []string{}}, nil
 }
 
 // RenameHabit renames a habit and returns its id and new name; Done is left nil.

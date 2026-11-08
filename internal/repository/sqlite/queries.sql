@@ -1,5 +1,5 @@
 -- name: ListActiveHabits :many
-SELECT id, name FROM habits
+SELECT id, name, created_at FROM habits
 WHERE user_id = sqlc.arg(user_id) AND deleted_at IS NULL ORDER BY position, id;
 
 -- name: ListActiveDays :many
@@ -7,9 +7,10 @@ SELECT d.habit_id, d.day FROM habit_days AS d JOIN habits AS h ON h.id = d.habit
 WHERE h.user_id = sqlc.arg(user_id) AND h.deleted_at IS NULL ORDER BY d.habit_id, d.day;
 
 -- name: InsertHabit :execrows
-INSERT INTO habits (id, name, user_id, position)
+INSERT INTO habits (id, name, user_id, position, created_at)
 VALUES (sqlc.arg(id), sqlc.arg(name), sqlc.arg(user_id),
-    (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = sqlc.arg(user_id)))
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = sqlc.arg(user_id)),
+    sqlc.arg(created_at))
 ON CONFLICT (id) DO NOTHING;
 
 -- name: RenameHabit :execrows

@@ -20,6 +20,7 @@ type Habit struct {
 	DeletedAt       sql.NullInt64
 	UserID          sql.NullString
 	LegacyPreserved int64
+	CreatedAt       sql.NullInt64
 }
 
 type HabitDay struct {

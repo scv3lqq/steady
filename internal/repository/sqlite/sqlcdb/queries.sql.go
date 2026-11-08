@@ -116,20 +116,27 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context, now int64) error {
 }
 
 const insertHabit = `-- name: InsertHabit :execrows
-INSERT INTO habits (id, name, user_id, position)
+INSERT INTO habits (id, name, user_id, position, created_at)
 VALUES (?1, ?2, ?3,
-    (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = ?3))
+    (SELECT COALESCE(MAX(position), -1) + 1 FROM habits WHERE user_id = ?3),
+    ?4)
 ON CONFLICT (id) DO NOTHING
 `
 
 type InsertHabitParams struct {
-	ID     string
-	Name   string
-	UserID sql.NullString
+	ID        string
+	Name      string
+	UserID    sql.NullString
+	CreatedAt sql.NullInt64
 }
 
 func (q *Queries) InsertHabit(ctx context.Context, arg InsertHabitParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, insertHabit, arg.ID, arg.Name, arg.UserID)
+	result, err := q.db.ExecContext(ctx, insertHabit,
+		arg.ID,
+		arg.Name,
+		arg.UserID,
+		arg.CreatedAt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -191,13 +198,14 @@ func (q *Queries) ListActiveDays(ctx context.Context, userID sql.NullString) ([]
 }
 
 const listActiveHabits = `-- name: ListActiveHabits :many
-SELECT id, name FROM habits
+SELECT id, name, created_at FROM habits
 WHERE user_id = ?1 AND deleted_at IS NULL ORDER BY position, id
 `
 
 type ListActiveHabitsRow struct {
-	ID   string
-	Name string
+	ID        string
+	Name      string
+	CreatedAt sql.NullInt64
 }
 
 func (q *Queries) ListActiveHabits(ctx context.Context, userID sql.NullString) ([]ListActiveHabitsRow, error) {
@@ -209,7 +217,7 @@ func (q *Queries) ListActiveHabits(ctx context.Context, userID sql.NullString) (
 	items := []ListActiveHabitsRow{}
 	for rows.Next() {
 		var i ListActiveHabitsRow
-		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+		if err := rows.Scan(&i.ID, &i.Name, &i.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

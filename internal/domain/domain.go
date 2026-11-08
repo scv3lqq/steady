@@ -64,9 +64,10 @@ const (
 
 // Habit is a tracked habit with the days it was done.
 type Habit struct {
-	ID   string
-	Name string
-	Done []string // day keys, ascending; never nil in State
+	ID        string
+	Name      string
+	CreatedAt time.Time // zero when unknown: the habit predates creation tracking
+	Done      []string  // day keys, ascending; never nil in State
 }
 
 // State is everything the client renders.

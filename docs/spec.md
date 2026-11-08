@@ -25,6 +25,7 @@ Build **Steady**, a minimal single-page habit tracker. The design below is final
   - `--accent` is chosen by the user, default `#4FA872`
 - Accent palette (10 colors): `#4FA872 #8FBF4A #3FB8B0 #5B8CEB #B07FE0 #E07BB0 #D96A6A #E08A45 #E3C24F #ECE7DC`.
 - Checkmark on a filled square uses `--bg` (dark on a light accent).
+- Favicon: an ivory (`#ECE7DC`) S on a blue (`#5B8CEB`) rounded square, distinct from the green habit checkmark.
 - Radii: week square 9px, buttons 8px, segmented control 11px, toast 12px. Use no shadows except on the toast.
 
 ## Layout
@@ -104,6 +105,7 @@ type Habit = { id: string; name: string; done: Record<string, true> }; // keys: 
 
 ## Acceptance
 - `npm run build` passes with zero TS errors, and the app served by the Go binary has no console errors.
+- Inspect the favicon at 16x16 and 32x32 for legibility. Before reporting that it appears in a browser tab, verify the tab itself; successful SVG decoding or an in-page preview alone does not prove browser icon selection.
 - Add, rename, delete + undo, toggling a day in all three views, switching views and changing the accent all work and survive a reload for the authenticated user.
 - Login, logout, errors and tracker controls have no horizontal scroll at 320px wide.
 - Automated tests cover legacy migration/bootstrap retries, CLI create/duplicates/reset, login success/failure, restart persistence, expiry, revocation, rate limits, unauthenticated access, cross-origin rejection and two-user isolation for every read/mutation route, including direct foreign habit IDs.

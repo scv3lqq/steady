@@ -195,6 +195,47 @@ func TestSoftDeleteRestoreKeepsPosition(t *testing.T) {
 	assertNames(t, mustState(t, fresh), "after restoring the last habit", "Beta", "Gamma", "Alpha")
 }
 
+func TestStateCreatedAt(t *testing.T) {
+	// Every case ends with the same expectation: the state reports the time of the first successful add.
+	tests := []struct {
+		name  string
+		steps func(t *testing.T, s *Store)
+	}{
+		{
+			name:  "recorded",
+			steps: func(t *testing.T, s *Store) { mustAdd(t, s, idA, "Alpha") },
+		},
+		{
+			name: "survives undo",
+			steps: func(t *testing.T, s *Store) {
+				mustAdd(t, s, idA, "Alpha")
+				mustDelete(t, s, idA, testCreatedAt.Add(time.Hour))
+				if err := s.RestoreHabit(t.Context(), testOwner, idA); err != nil {
+					t.Fatalf("RestoreHabit(A): %v", err)
+				}
+			},
+		},
+		{
+			name: "retry keeps original",
+			steps: func(t *testing.T, s *Store) {
+				mustAdd(t, s, idA, "Alpha")
+				if err := s.AddHabit(t.Context(), testOwner, idA, "Alpha", testCreatedAt.Add(time.Hour)); !errors.Is(err, domain.ErrExists) {
+					t.Fatalf("AddHabit(A again) error = %v, want %v", err, domain.ErrExists)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			tc.steps(t, s)
+			if got := habitByID(t, mustState(t, s), idA).CreatedAt; !got.Equal(testCreatedAt) {
+				t.Errorf("CreatedAt = %v, want %v", got, testCreatedAt)
+			}
+		})
+	}
+}
+
 func TestNotFound(t *testing.T) {
 	t0 := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	// Only B is ever added, so C is an id the store has never seen.

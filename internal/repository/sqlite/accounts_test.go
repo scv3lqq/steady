@@ -209,6 +209,19 @@ func TestBootstrapFailureRollsBackAndCanRetry(t *testing.T) {
 	assertLegacyValues(t, s, testOwner)
 }
 
+func TestLegacyHabitsHaveUnknownCreatedAt(t *testing.T) {
+	s := openAccountStore(t, legacyDatabase(t))
+	owner := domain.Account{ID: testOwner, Username: "owner", PasswordHash: "hash"}
+	if changed, err := s.BootstrapOwner(t.Context(), owner); err != nil || !changed {
+		t.Fatalf("bootstrap = %t, %v", changed, err)
+	}
+	state := ownerState(t, s, testOwner)
+	assertNames(t, state, "bootstrapped", "Legacy active")
+	if got := habitByID(t, state, idA).CreatedAt; !got.IsZero() {
+		t.Errorf("legacy habit CreatedAt = %v, want the zero time", got)
+	}
+}
+
 func TestAccountsStartEmptyAndBootstrapRejectsExistingUsername(t *testing.T) {
 	s := openAccountStore(t, legacyDatabase(t))
 	a := account(t, s, testOwner, "owner")
@@ -413,21 +426,47 @@ func TestPasswordResetFailureRollsBackHashAndSessions(t *testing.T) {
 }
 
 func TestMigrationDowngradeRejectsWithoutChangingData(t *testing.T) {
-	s := newStore(t)
-	mustAdd(t, s, idA, "Retain through rejected downgrade")
-	files, err := fs.Sub(migrationFiles, "migrations")
-	if err != nil {
-		t.Fatal(err)
+	// Down undoes only the newest applied migration, so each rejecting Down needs a database that stops at its version.
+	tests := []struct {
+		name    string
+		version int64
+	}{
+		{name: "00002_accounts", version: 2},
+		{name: "00003_habit_created_at", version: 3},
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, s.db, files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := provider.Down(t.Context()); err == nil {
-		t.Fatal("account migration downgrade must reject in-place ownership loss")
-	}
-	assertNames(t, ownerState(t, s, testOwner), "after rejected downgrade", "Retain through rejected downgrade")
-	if _, err := s.AccountByUsername(t.Context(), "owner"); err != nil {
-		t.Fatalf("downgrade lost account: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "steady.db")
+			db, err := sql.Open("sqlite", path+dsnQuery)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files, err := fs.Sub(migrationFiles, "migrations")
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, err := goose.NewProvider(goose.DialectSQLite3, db, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := provider.UpTo(t.Context(), tc.version); err != nil {
+				t.Fatal(err)
+			}
+			// The store's queries name created_at, which a version 2 database lacks: seed with raw SQL and read the
+			// data back through a reopened store, which migrates the database forward.
+			fixtureExec(t, db, "INSERT INTO users(id,username,password_hash) VALUES (?,?,?)", testOwner, "owner", "hash")
+			fixtureExec(t, db, "INSERT INTO habits(id,name,position,user_id) VALUES (?,?,?,?)", idA, "Retain through rejected downgrade", 0, testOwner)
+			if _, err := provider.Down(t.Context()); err == nil {
+				t.Fatalf("downgrade of migration %s must reject in-place data loss", tc.name)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s := openAccountStore(t, path)
+			assertNames(t, ownerState(t, s, testOwner), "after rejected downgrade", "Retain through rejected downgrade")
+			if _, err := s.AccountByUsername(t.Context(), "owner"); err != nil {
+				t.Fatalf("downgrade lost account: %v", err)
+			}
+		})
 	}
 }

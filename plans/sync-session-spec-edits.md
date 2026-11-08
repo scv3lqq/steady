@@ -8,7 +8,7 @@
 
 ````md E1-new
 - Re-render on every change. Don't rebuild the input that has focus: patch in place, or skip the name input while it's focused, so the caret doesn't jump while the user types. Defer a remote view change until the focused habit name loses focus.
-- Poll the authenticated account state every 3 seconds while visible (at most 20 reads per minute per visible tab), so remote changes appear within 5 seconds with a responsive server. Pause hidden tabs. Check immediately on visibility restoration, focus, online, pageshow and resume; coalesce concurrent triggers and bound reads to 4 seconds. Keep optimistic writes, pending names, input drafts and Undo. Reject snapshots started during writes or before a newer local edit, even after the write queue drains; within one account, the last successfully saved day operation wins.
+- Poll the authenticated account state every 3 seconds while visible (20 periodic reads per minute per visible tab, plus immediate wake checks), so remote changes appear within 5 seconds with a responsive server. Pause hidden tabs. Check immediately on visibility restoration, focus, online, pageshow and resume; coalesce concurrent triggers and bound reads to 4 seconds. Keep optimistic writes, pending names, input drafts and Undo. Reject snapshots started during writes or before a newer local edit, even after the write queue drains; within one account, the last successfully saved day operation wins.
 ````
 
 **E2.** (lines 92-92)

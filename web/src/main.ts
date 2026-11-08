@@ -1,5 +1,6 @@
 import { render, type Ui } from './render.js';
 import { Store, type View } from './store.js';
+import { startSync } from './sync.js';
 
 const TOAST_MS = 5000;
 const NAME_INPUT = 'input.name';
@@ -150,6 +151,8 @@ function start(): void {
       if (id !== undefined) {
         store.commitRename(id);
       }
+      // Apply a deferred view after the browser finishes transferring focus.
+      queueMicrotask(draw);
     } else if (input.matches(ADD_INPUT) && input.value.trim() === '') {
       closeAddRow(input);
     }
@@ -179,7 +182,7 @@ function start(): void {
   fonts.href = FONTS_URL;
   document.head.append(fonts);
 
-  void store.load();
+  startSync(() => store.refresh(), document, window);
 }
 
 start();

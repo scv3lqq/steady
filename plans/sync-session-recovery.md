@@ -54,3 +54,14 @@ SSE/WebSockets, schema migration, revisions API, password storage, sliding renew
 
 ## Execution and evidence
 T1/T2 first, wait for RED exit before source writers. T3 then T4 sequentially because tsc emits the entire compile unit. Scoped builds may deterministically regenerate unchanged sibling dist files; only changed owned outputs are staged. Review exact commits or file hashes independently; full gates serially only after completed waves, acceptance-validator runs final full gates. Up to five fix iterations, stop on same finding three times or unavailable mandatory gates. All logs stay in private scratch, never commit environment paths. Baseline evidence external to repo. Generated output staged for freshness before precommit gates, never skip hooks. Merge/push authorization overrides canonical feature branch defaults.
+
+## Iteration 1: pagehide write ownership
+Independent review reproduced a state snapshot overwriting a pending keepalive rename after pagehide/pageshow. This is within the original pending-name/stale-response requirements; fix before final acceptance.
+
+### T6: Pagehide regression (test-first)
+Ownership: web/test/store.test.mjs only. Add named cases holding keepalive PATCH while a GET snapshot is dispatched and completes before/after PATCH completion. Expected local name remains `Still typing after wake`; once server accepts the rename a later snapshot converges. A stale flush from an earlier generation must never decrement current-generation write tracking. Named mutation: remove flush accounting from read eligibility. Gate: cd web && npm run build && node --test test/store.test.mjs. Save exited RED before T7. Reviewer's reproduction is in private scratch probe-flush.
+
+### T7: Track pagehide writes
+Depends exited T6 RED. Ownership: web/src/store.ts and generated web/dist/store.js only. Add private flushing count initialized to zero and reset on auth transition. Increment synchronously when dispatching each keepalive rename; include it with queued writes at state GET dispatch and commit eligibility. Decrement in finally only when captured generation matches current generation. A GET dispatched while flushing stays ineligible even if flush finished before body arrives. Keep timeout-free keepalive write, session binding, session-loss handling, pending/auth cleanup. Later polling supplies authoritative state; no offline replay or new timers. Gate: cd web && npm run build && node --test test/store.test.mjs. Other code unchanged.
+
+Seam T6/T7: flushing participates in snapshot eligibility, scoped by session generation. Re-review the changed hashes and rerun full Gates before commit. This early review fix is incorporated before the final validator instead of shipping a known failure to acceptance.

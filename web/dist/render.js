@@ -28,6 +28,7 @@ export function render(root, state, ui, now, auth) {
         return;
     }
     const todayKey = dayKey(now);
+    const view = focusedView(root, state.view);
     const total = state.habits.length;
     const done = state.habits.filter((habit) => habit.done[todayKey] === true).length;
     setText(required(root, '#today'), formatHeaderDate(now));
@@ -35,12 +36,21 @@ export function render(root, state, ui, now, auth) {
     setText(required(root, '#title'), titleText(done, total));
     required(root, '#progress').style.width = `${total === 0 ? 0 : (done / total) * 100}%`;
     for (const tab of root.querySelectorAll('.tab')) {
-        setAttr(tab, 'aria-selected', String(tab.dataset.value === state.view));
+        setAttr(tab, 'aria-selected', String(tab.dataset.value === view));
     }
     // Only visibility: the add input keeps its own value and focus.
     required(root, '#add-row').hidden = !ui.adding;
     renderToast(root, ui.toast);
-    renderList(required(root, '#list'), state, now);
+    renderList(required(root, '#list'), { ...state, view }, now);
+}
+function focusedView(root, requested) {
+    const input = document.activeElement;
+    if (!(input instanceof HTMLInputElement) || !input.matches('input.name') || !root.contains(input)) {
+        return requested;
+    }
+    // Rebuilding a row for a remote view change would discard the active input and its caret.
+    const view = input.closest('[data-view]')?.dataset.view;
+    return view === 'week' || view === 'month' || view === 'year' ? view : requested;
 }
 function titleText(done, total) {
     if (total === 0) {

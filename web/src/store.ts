@@ -52,6 +52,17 @@ interface ApiState {
   accent: string;
 }
 
+async function authenticationRequired(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  try {
+    const body: unknown = await response.json();
+    return typeof body === 'object' && body !== null &&
+      'error' in body && body.error === 'authentication required';
+  } catch {
+    return false;
+  }
+}
+
 function normalizeName(name: string): string {
   return name.trim() || DEFAULT_NAME;
 }
@@ -96,7 +107,11 @@ export class Store {
   #authPending = 0;
   #queue: Promise<void> = Promise.resolve();
   #queued = 0;
+  #flushing = 0;
   #stale = false;
+  #revision = 0;
+  #readSequence = 0;
+  #refresh: { generation: number; promise: Promise<void> } | undefined;
   #timers = new Map<string, number>();
   #pending = new Map<string, string>();
 
@@ -122,6 +137,17 @@ export class Store {
     return this.#track(work);
   }
 
+  refresh(): Promise<void> {
+    if (this.#authPending > 0 || this.#auth.status === 'anonymous') return Promise.resolve();
+    if (this.#refresh?.generation === this.#generation) return this.#refresh.promise;
+    const refresh = { generation: this.#generation, promise: Promise.resolve() };
+    refresh.promise = this.load().finally(() => {
+      if (this.#refresh === refresh) this.#refresh = undefined;
+    });
+    this.#refresh = refresh;
+    return refresh.promise;
+  }
+
   login(username: string, password: string): Promise<void> {
     return this.#authenticate('/api/login', { username, password });
   }
@@ -131,7 +157,13 @@ export class Store {
   }
 
   #transition(status: Auth['status'], binding = ''): void {
+    const previousGeneration = this.#generation;
     this.#generation += 1;
+    if (status === 'authenticated' && this.#refresh?.generation === previousGeneration) {
+      this.#refresh.generation = this.#generation;
+    } else {
+      this.#refresh = undefined;
+    }
     this.#controller.abort();
     this.#controller = new AbortController();
     this.#binding = binding;
@@ -142,6 +174,7 @@ export class Store {
     this.#pending.clear();
     this.#queue = Promise.resolve();
     this.#queued = 0;
+    this.#flushing = 0;
     this.#stale = false;
     this.#onChange();
   }
@@ -187,6 +220,8 @@ export class Store {
             this.#auth.error = path === '/api/login' ? 'Unable to log in. Check your credentials and try again.' : 'Unable to log out. Try again.';
           }
         } else if (path === '/api/login') {
+          this.#auth.status = 'checking';
+          this.#onChange();
           await this.#track(this.#checkSession(generation));
         }
       } catch {
@@ -201,32 +236,40 @@ export class Store {
     return run;
   }
 
+  #readSignal(): AbortSignal {
+    return AbortSignal.any([this.#controller.signal, AbortSignal.timeout(4000)]);
+  }
+
+  #sessionCheckFailed(generation: number): void {
+    if (generation !== this.#generation) return;
+    this.#auth.error = 'Unable to check your session. Try again.';
+    this.#onChange();
+  }
+
   async #checkSession(generation: number): Promise<void> {
+    this.#auth.status = 'checking';
     try {
-      const res = await fetch('/api/session', { signal: this.#controller.signal });
+      const res = await fetch('/api/session', { signal: this.#readSignal() });
       if (generation !== this.#generation) return;
       if (!res.ok) {
-        if (res.status === 401) {
-          this.#sessionLost(generation);
-        } else {
-          this.#transition('anonymous');
-          this.#auth.error = 'Unable to check your session. Try again.';
-          this.#onChange();
-        }
+        const lost = await authenticationRequired(res);
+        if (generation !== this.#generation) return;
+        if (lost) this.#sessionLost(generation);
+        else this.#sessionCheckFailed(generation);
         return;
       }
-      const session = await res.json() as { username: string; binding: string };
+      const session: unknown = await res.json();
       if (generation !== this.#generation) return;
-      if (typeof session.username !== 'string' || !/^[a-f0-9]{64}$/.test(session.binding)) {
+      if (typeof session !== 'object' || session === null ||
+          !('username' in session) || typeof session.username !== 'string' ||
+          !('binding' in session) || typeof session.binding !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(session.binding)) {
         throw new Error('Invalid session response');
       }
       this.#transition('authenticated', session.binding);
       await this.#loadState(this.#generation);
     } catch {
-      if (generation !== this.#generation) return;
-      this.#transition('anonymous');
-      this.#auth.error = 'Unable to check your session. Try again.';
-      this.#onChange();
+      this.#sessionCheckFailed(generation);
     }
   }
 
@@ -238,15 +281,16 @@ export class Store {
   }
 
   async #loadState(generation: number): Promise<void> {
+    const revision = this.#revision;
+    const idleAtDispatch = this.#queued === 0 && this.#flushing === 0;
+    const sequence = ++this.#readSequence;
     let next: State;
     try {
-      const res = await fetch('/api/state', this.#privateInit('GET'));
+      const res = await fetch('/api/state', { ...this.#privateInit('GET'), signal: this.#readSignal() });
       if (generation !== this.#generation) return;
-      if (res.status === 401) {
-        this.#sessionLost(generation);
-        return;
-      }
       if (!res.ok) {
+        const lost = await authenticationRequired(res);
+        if (lost) this.#sessionLost(generation);
         return;
       }
       // The server is ours: a malformed body throws in toState and counts as a failed load.
@@ -255,10 +299,11 @@ export class Store {
     } catch {
       return;
     }
-    // An edit queued while the GET was in flight is missing from this snapshot: keep the local
-    // state and reload again once the queue drains.
-    if (this.#queued > 0) {
-      this.#stale = true;
+    // A completed write can drain before this body arrives; revision and dispatch-idle checks
+    // still reject its older snapshot. Polling or the queue drain supplies the next read.
+    if (!idleAtDispatch || this.#queued > 0 || this.#flushing > 0 ||
+        revision !== this.#revision || sequence !== this.#readSequence) {
+      if (this.#queued > 0) this.#stale = true;
       return;
     }
     // Names typed but not yet sent are newer than the server's copy.
@@ -269,12 +314,14 @@ export class Store {
       }
     }
     this.#state = next;
+    this.#auth.error = '';
     this.#onChange();
   }
 
   addHabit(name: string): void {
     if (this.#auth.status !== 'authenticated') return;
     const id = crypto.randomUUID();
+    this.#revision += 1;
     this.#state.habits.push({ id, name, done: {} });
     this.#onChange();
     this.#enqueue('POST', '/api/habits', { id, name });
@@ -285,6 +332,7 @@ export class Store {
     if (habit === undefined) {
       return;
     }
+    this.#revision += 1;
     habit.name = name;
     this.#pending.set(id, name);
     clearTimeout(this.#timers.get(id));
@@ -298,12 +346,14 @@ export class Store {
     if (habit === undefined) {
       return;
     }
+    this.#revision += 1;
     habit.name = normalizeName(habit.name);
     this.#onChange();
   }
 
   flushPending(): void {
     if (this.#auth.status !== 'authenticated') return;
+    this.#revision += 1;
     for (const timer of this.#timers.values()) {
       clearTimeout(timer);
     }
@@ -311,6 +361,7 @@ export class Store {
       // keepalive lets the request outlive the page that is being closed.
       const init: RequestInit = { ...this.#privateInit('PATCH', { name }), keepalive: true };
       const generation = this.#generation;
+      this.#flushing += 1;
       void this.#track(this.#flush(habitPath(id), init, generation));
     }
     this.#timers.clear();
@@ -322,6 +373,7 @@ export class Store {
     if (habit === undefined) {
       return null;
     }
+    this.#revision += 1;
     this.#sendPending(id);
     habit.name = normalizeName(habit.name);
     const index = this.#state.habits.indexOf(habit);
@@ -337,6 +389,7 @@ export class Store {
     if (habits.some((h) => h.id === d.habit.id)) {
       return;
     }
+    this.#revision += 1;
     habits.splice(Math.min(d.index, habits.length), 0, d.habit);
     this.#onChange();
     this.#enqueue('POST', `${habitPath(d.habit.id)}/restore`);
@@ -347,6 +400,7 @@ export class Store {
     if (habit === undefined) {
       return;
     }
+    this.#revision += 1;
     let method: 'PUT' | 'DELETE';
     if (habit.done[day]) {
       delete habit.done[day];
@@ -364,6 +418,7 @@ export class Store {
     if (view === this.#state.view) {
       return;
     }
+    this.#revision += 1;
     this.#state.view = view;
     this.#onChange();
     this.#enqueue('PUT', '/api/settings', { view });
@@ -374,6 +429,7 @@ export class Store {
     if (accent === this.#state.accent || !PALETTE.includes(accent)) {
       return;
     }
+    this.#revision += 1;
     this.#state.accent = accent;
     this.#onChange();
     this.#enqueue('PUT', '/api/settings', { accent });
@@ -391,11 +447,13 @@ export class Store {
     if (name === undefined) {
       return;
     }
+    this.#revision += 1;
     this.#pending.delete(id);
     this.#enqueue('PATCH', habitPath(id), { name });
   }
 
   #enqueue(method: string, path: string, body?: unknown): void {
+    this.#revision += 1;
     const generation = this.#generation;
     const init = this.#privateInit(method, body);
     this.#queued += 1;
@@ -409,9 +467,11 @@ export class Store {
   async #flush(path: string, init: RequestInit, generation: number): Promise<void> {
     try {
       const res = await fetch(path, init);
-      if (res.status === 401) this.#sessionLost(generation);
+      if (await authenticationRequired(res)) this.#sessionLost(generation);
     } catch {
       // The page is closing; abort and network failures cannot be recovered here.
+    } finally {
+      if (generation === this.#generation) this.#flushing -= 1;
     }
   }
 
@@ -419,11 +479,13 @@ export class Store {
     try {
       const res = await fetch(path, init);
       if (generation !== this.#generation) return;
-      if (res.status === 401) {
-        this.#sessionLost(generation);
-        return;
-      }
       if (!res.ok) {
+        const lost = await authenticationRequired(res);
+        if (generation !== this.#generation) return;
+        if (lost) {
+          this.#sessionLost(generation);
+          return;
+        }
         this.#stale = true;
       }
     } catch {

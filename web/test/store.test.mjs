@@ -23,8 +23,10 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function response(status = 204, body) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body };
+function response(status = 204, body = status === 401 ? { error: 'authentication required' } : undefined) {
+  return new Response(body === undefined ? null : JSON.stringify(body), {
+    status, headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+  });
 }
 
 async function settle() {
@@ -62,9 +64,13 @@ function fixture(t) {
     const overridden = fixtureState.override?.(call);
     if (overridden !== undefined) return overridden;
     if (path === '/api/session') {
-      return response(fixtureState.sessionStatus, {
+      return response(fixtureState.sessionStatus, fixtureState.sessionStatus === 200 ? {
         username: fixtureState.username, binding: fixtureState.binding,
-      });
+      } : undefined);
+    }
+    if (path !== '/api/login' && path !== '/api/logout' &&
+        (fixtureState.sessionStatus !== 200 || new Headers(init.headers).get('X-Steady-Session') !== fixtureState.binding)) {
+      return response(401);
     }
     if (path === '/api/state') return response(200, fixtureState.privateState);
     return response();
@@ -427,7 +433,9 @@ test('a session response without a valid binding cannot expose private state', a
   server.binding = undefined;
   const store = new Store(() => {});
   await store.load();
-  assertAnonymous(store);
+  assert.equal(store.auth.status, 'checking');
+  assert.equal(store.auth.error, 'Unable to check your session. Try again.');
+  assert.deepEqual(store.state, EMPTY);
   assert.equal(server.calls.some(({ path }) => path === '/api/state'), false);
 });
 
@@ -569,4 +577,404 @@ test('login 429 displays the specified retry-later message', async (t) => {
   await store.login('alice', 'a private password');
   assertAnonymous(store);
   assert.equal(store.auth.error, 'Too many login attempts. Try again later.');
+});
+
+for (const failure of ['503', 'network', 'proxy 401']) {
+  test(`initial ${failure} discovery remains checking and refresh recovers`, async (t) => {
+    const { server } = fixture(t);
+    server.override = ({ path }) => {
+      if (path !== '/api/session') return undefined;
+      if (failure === 'network') return Promise.reject(new TypeError('offline'));
+      return failure === '503' ? response(503) : new Response('<html>Proxy login</html>', { status: 401 });
+    };
+    const store = new Store(() => {});
+    await store.load();
+    assert.equal(store.auth.status, 'checking');
+    assert.equal(store.auth.error, 'Unable to check your session. Try again.');
+    assert.deepEqual(store.state, EMPTY);
+    assert.deepEqual(server.messages, []);
+    server.override = undefined;
+    await store.refresh();
+    assert.equal(store.auth.status, 'authenticated');
+    assert.equal(store.auth.error, '');
+    assert.equal(store.state.habits[0].id, 'alice-habit');
+  });
+}
+
+for (const failure of ['503', 'network', 'proxy 401']) {
+  test(`authenticated ${failure} read preserves private state and binding until recovery`, async (t) => {
+    const { store, server } = await loaded(t);
+    server.override = ({ path }) => {
+      if (path !== '/api/state') return undefined;
+      if (failure === 'network') return Promise.reject(new TypeError('offline'));
+      return failure === '503' ? response(503) : new Response('<html>Proxy login</html>', { status: 401 });
+    };
+    await store.load();
+    assert.equal(store.auth.status, 'authenticated');
+    assert.equal(store.state.habits[0].id, 'alice-habit');
+    assert.deepEqual(server.messages, []);
+    server.override = undefined;
+    server.privateState = { ...ALICE, accent: '#3FB8B0' };
+    await store.refresh();
+    assert.equal(store.state.accent, '#3FB8B0');
+    const last = server.calls.at(-1);
+    assert.equal(new Headers(last.init.headers).get('X-Steady-Session'), A_BINDING);
+  });
+}
+
+for (const source of ['mutation', 'pagehide']) {
+  test(`proxy 401 ${source} does not revoke the application session or notify peers`, async (t) => {
+    const { store, server } = await loaded(t);
+    activeTimers(t);
+    server.override = ({ path, init }) => path.includes('/days/') || init.keepalive
+      ? new Response('<html>Proxy login</html>', { status: 401 }) : undefined;
+    if (source === 'mutation') store.toggleDay('alice-habit', '2026-11-02');
+    else {
+      store.renameHabit('alice-habit', 'Pending name');
+      store.flushPending();
+    }
+    await settle();
+    assert.equal(store.auth.status, 'authenticated');
+    assert.equal(store.state.habits[0].id, 'alice-habit');
+    assert.deepEqual(server.messages, []);
+  });
+}
+
+test('successful login with transient discovery enters checking and recovers without another password', async (t) => {
+  const { server } = fixture(t);
+  server.sessionStatus = 401;
+  const store = new Store(() => {});
+  await store.load();
+  server.override = ({ path }) => path === '/api/session' ? response(503) : undefined;
+  await store.login('alice', 'a private password');
+  assert.equal(store.auth.status, 'checking');
+  assert.equal(store.auth.busy, false);
+  assert.equal(store.auth.error, 'Unable to check your session. Try again.');
+  server.override = undefined;
+  server.sessionStatus = 200;
+  await store.refresh();
+  assert.equal(store.auth.status, 'authenticated');
+  assert.equal(server.calls.filter(({ path }) => path === '/api/login').length, 1);
+});
+
+test('refresh skips an anonymous login screen and active authentication operations', async (t) => {
+  const { server } = fixture(t);
+  server.sessionStatus = 401;
+  const store = new Store(() => {});
+  await store.load();
+  const baseline = server.calls.length;
+  await store.refresh();
+  assert.equal(server.calls.length, baseline);
+  const login = deferred();
+  server.override = ({ path }) => path === '/api/login' ? login.promise : undefined;
+  const authenticating = store.login('alice', 'a private password');
+  await settle();
+  const duringLogin = server.calls.length;
+  await store.refresh();
+  assert.equal(server.calls.length, duringLogin);
+  login.resolve(response());
+  await authenticating;
+});
+
+test('refresh coalesces concurrent checks and releases its slot after completion', async (t) => {
+  const { store, server } = await loaded(t);
+  const next = deferred();
+  server.override = ({ path }) => path === '/api/state' ? next.promise : undefined;
+  const first = store.refresh();
+  const second = store.refresh();
+  await settle();
+  assert.equal(server.calls.filter(({ path }) => path === '/api/state').length, 2);
+  next.resolve(response(200, ALICE));
+  await Promise.all([first, second]);
+  server.override = undefined;
+  await store.refresh();
+  assert.equal(server.calls.filter(({ path }) => path === '/api/state').length, 3);
+});
+
+test('a state body captured before a completed write cannot erase the local mark', async (t) => {
+  const { store, server } = await loaded(t);
+  const body = deferred();
+  let intercepted = false;
+  server.override = ({ path }) => {
+    if (path !== '/api/state' || intercepted) return undefined;
+    intercepted = true;
+    return { ok: true, status: 200, json: () => body.promise };
+  };
+  const loading = store.load();
+  await settle();
+  store.toggleDay('alice-habit', '2026-11-02');
+  await settle();
+  server.privateState = { ...ALICE, habits: [{ ...ALICE.habits[0], done: ['2026-11-03', '2026-11-02'] }] };
+  body.resolve(ALICE);
+  await loading;
+  assert.equal(store.state.habits[0].done['2026-11-02'], true);
+});
+
+test('a GET dispatched with an outstanding write cannot commit its older snapshot after the drain', async (t) => {
+  const { store, server } = await loaded(t);
+  const write = deferred();
+  const body = deferred();
+  let intercepted = false;
+  server.override = ({ path }) => {
+    if (path.includes('/days/')) return write.promise;
+    if (path === '/api/state' && !intercepted) {
+      intercepted = true;
+      return { ok: true, status: 200, json: () => body.promise };
+    }
+    return undefined;
+  };
+  store.toggleDay('alice-habit', '2026-11-02');
+  await settle();
+  const loading = store.load();
+  await settle();
+  write.resolve(response());
+  await settle();
+  server.privateState = { ...ALICE, habits: [{ ...ALICE.habits[0], done: ['2026-11-03', '2026-11-02'] }] };
+  body.resolve(ALICE);
+  await loading;
+  assert.equal(store.state.habits[0].done['2026-11-02'], true);
+});
+
+test('pending rename survives a remote snapshot and saves once with its session binding', async (t) => {
+  const { store, server } = await loaded(t);
+  activeTimers(t);
+  store.renameHabit('alice-habit', 'Still typing');
+  server.privateState = { ...ALICE, accent: '#3FB8B0' };
+  await store.load();
+  assert.equal(store.state.habits[0].name, 'Still typing');
+  assert.equal(store.state.accent, '#3FB8B0');
+  store.commitRename('alice-habit');
+  await settle();
+  const writes = mutations(server);
+  assert.equal(writes.length, 1);
+  assert.equal(new Headers(writes[0].init.headers).get('X-Steady-Session'), A_BINDING);
+  assert.deepEqual(JSON.parse(writes[0].init.body), { name: 'Still typing' });
+});
+
+test('an older overlapping GET cannot overwrite a later server snapshot', async (t) => {
+  const { store, server } = await loaded(t);
+  const body = deferred();
+  let reads = 0;
+  server.override = ({ path }) => {
+    if (path !== '/api/state') return undefined;
+    reads += 1;
+    return reads === 1 ? { ok: true, status: 200, json: () => body.promise }
+      : response(200, { ...ALICE, accent: '#3FB8B0' });
+  };
+  const older = store.load();
+  await settle();
+  await store.load();
+  assert.equal(store.state.accent, '#3FB8B0');
+  body.resolve(ALICE);
+  await older;
+  assert.equal(store.state.accent, '#3FB8B0');
+});
+
+for (const phase of ['session', 'state']) {
+  test(`${phase} reads have a four-second timeout and retry after cancellation`, async (t) => {
+    const { server } = fixture(t);
+    const store = new Store(() => {});
+    if (phase === 'state') await store.load();
+    const originalTimeout = AbortSignal.timeout;
+    const deadlines = [];
+    AbortSignal.timeout = (delay) => {
+      const controller = new AbortController();
+      deadlines.push({ delay, controller });
+      return controller.signal;
+    };
+    t.after(() => { AbortSignal.timeout = originalTimeout; });
+    server.override = ({ path, init }) => {
+      if (path !== `/api/${phase}`) return undefined;
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+      });
+    };
+    const loading = store.load();
+    await settle();
+    assert.deepEqual(deadlines.map(({ delay }) => delay), [4000]);
+    deadlines[0].controller.abort(new DOMException('Timeout', 'TimeoutError'));
+    await loading;
+    assert.equal(store.auth.status, phase === 'session' ? 'checking' : 'authenticated');
+    server.override = undefined;
+    await store.refresh();
+    assert.equal(store.auth.status, 'authenticated');
+  });
+}
+
+function independentClients(t) {
+  fixture(t);
+  const accounts = new Map([['alice', structuredClone(ALICE)], ['bob', structuredClone(BOB)]]);
+  const sessions = new Map([
+    ['cookie-alice-one', { username: 'alice', binding: A_BINDING }],
+    ['cookie-alice-two', { username: 'alice', binding: 'c'.repeat(64) }],
+    ['cookie-bob', { username: 'bob', binding: B_BINDING }],
+  ]);
+  const backend = { cookie: '', calls: [], deferWrite: undefined, successful: [] };
+  globalThis.fetch = async (path, init = {}) => {
+    const cookie = backend.cookie;
+    const session = sessions.get(cookie);
+    backend.calls.push({ path, init, cookie });
+    if (session === undefined) return response(401);
+    if (path === '/api/session') return response(200, session);
+    if (new Headers(init.headers).get('X-Steady-Session') !== session.binding) return response(401);
+    const state = accounts.get(session.username);
+    if (path === '/api/state') return response(200, structuredClone(state));
+    const match = /^\/api\/habits\/([^/]+)\/days\/([^/]+)$/.exec(path);
+    if (match === null) throw new Error(`Unexpected request ${path}`);
+    const habit = state.habits.find(({ id }) => id === decodeURIComponent(match[1]));
+    if (habit === undefined) return response(404);
+    const held = backend.deferWrite?.({ path, init, cookie });
+    if (held !== undefined) await held;
+    const day = decodeURIComponent(match[2]);
+    habit.done = habit.done.filter((saved) => saved !== day);
+    if (init.method === 'PUT') habit.done.push(day);
+    backend.successful.push({ cookie, method: init.method });
+    return response();
+  };
+  function client(cookie) {
+    const store = new Store(() => {});
+    return {
+      store,
+      async run(operation) {
+        backend.cookie = cookie;
+        await operation(store);
+        await settle();
+      },
+    };
+  }
+  return { backend, accounts, first: client('cookie-alice-one'), second: client('cookie-alice-two'), bob: client('cookie-bob') };
+}
+
+test('independent cookie clients converge on remote mark and unmark without replaying saves', async (t) => {
+  const { backend, first, second } = independentClients(t);
+  await first.run((store) => store.load());
+  await second.run((store) => store.load());
+  await first.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  await second.run((store) => store.refresh());
+  assert.equal(second.store.state.habits[0].done['2026-11-02'], true);
+  await second.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  await first.run((store) => store.refresh());
+  assert.equal(first.store.state.habits[0].done['2026-11-02'], undefined);
+  await second.run((store) => store.refresh());
+  assert.equal(backend.successful.length, 2);
+  assert.deepEqual(backend.successful.map(({ method }) => method), ['PUT', 'DELETE']);
+});
+
+test('independent concurrent cookie saves converge to the last server-successful mark', async (t) => {
+  const { backend, first, second } = independentClients(t);
+  await first.run((store) => store.load());
+  await second.run((store) => store.load());
+  const delayed = deferred();
+  backend.deferWrite = ({ cookie }) => cookie === 'cookie-alice-one' ? delayed.promise : undefined;
+  await first.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  await second.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  await second.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  delayed.resolve();
+  await settle();
+  assert.deepEqual(backend.successful.map(({ method }) => method), ['PUT', 'DELETE', 'PUT']);
+  await first.run((store) => store.refresh());
+  await second.run((store) => store.refresh());
+  assert.equal(first.store.state.habits[0].done['2026-11-02'], true);
+  assert.equal(second.store.state.habits[0].done['2026-11-02'], true);
+  assert.equal(backend.successful.length, 3, 'refresh cannot replay an already successful write');
+});
+
+test('independent cookie clients keep account state isolated and reject a foreign binding', async (t) => {
+  const { backend, accounts, first, bob } = independentClients(t);
+  await first.run((store) => store.load());
+  await bob.run((store) => store.load());
+  await first.run((store) => store.toggleDay('alice-habit', '2026-11-02'));
+  await bob.run((store) => store.refresh());
+  assert.deepEqual(bob.store.state.habits.map(({ id }) => id), ['bob-habit']);
+  assert.deepEqual(accounts.get('bob').habits[0].done, []);
+  // The transport supplies Bob's cookie while the request still carries Alice's captured binding.
+  await bob.run(() => first.store.toggleDay('alice-habit', '2026-11-01'));
+  assertAnonymous(first.store);
+  assert.equal(accounts.get('alice').habits[0].done.includes('2026-11-01'), false);
+  assert.equal(backend.calls.at(-1).cookie, 'cookie-bob');
+});
+
+for (const completion of ['before', 'after']) {
+  test(`pagehide snapshot completing ${completion} the keepalive write preserves the local name until convergence`, async (t) => {
+    const { store, server } = await loaded(t);
+    activeTimers(t);
+    const write = deferred();
+    const body = deferred();
+    t.after(() => { write.resolve(response()); body.resolve(ALICE); });
+    server.override = ({ path, init }) => {
+      if (init.keepalive) {
+        assert.equal(new Headers(init.headers).get('X-Steady-Session'), A_BINDING);
+        assert.equal(init.method, 'PATCH');
+        assert.deepEqual(JSON.parse(init.body), { name: 'Still typing after wake' });
+        return write.promise;
+      }
+      return path === '/api/state' ? { ok: true, status: 200, json: () => body.promise } : undefined;
+    };
+    store.renameHabit('alice-habit', 'Still typing after wake');
+    store.flushPending();
+    await settle();
+    const loading = store.refresh();
+    await settle();
+    if (completion === 'after') {
+      write.resolve(response());
+      await settle();
+    }
+    body.resolve(ALICE);
+    await loading;
+    assert.equal(store.state.habits[0].name, 'Still typing after wake');
+    write.resolve(response());
+    await settle();
+    server.privateState = {
+      ...ALICE, accent: '#3FB8B0',
+      habits: [{ ...ALICE.habits[0], name: 'Still typing after wake' }],
+    };
+    server.override = undefined;
+    await store.refresh();
+    assert.equal(store.state.habits[0].name, 'Still typing after wake');
+    assert.equal(store.state.accent, '#3FB8B0', 'a later authoritative snapshot must become eligible');
+    assert.equal(mutations(server).length, 1, 'polling must not replay the completed keepalive write');
+  });
+}
+
+test('an old-generation pagehide completion cannot release a new-generation pending flush', async (t) => {
+  const { store, server, invalidate } = await loaded(t);
+  activeTimers(t);
+  const oldWrite = deferred();
+  const newWrite = deferred();
+  t.after(() => { oldWrite.resolve(response()); newWrite.resolve(response()); });
+  server.override = ({ init }) => {
+    if (!init.keepalive) return undefined;
+    assert.equal(new Headers(init.headers).get('X-Steady-Session'), A_BINDING);
+    return oldWrite.promise;
+  };
+  store.renameHabit('alice-habit', 'Old account pending name');
+  store.flushPending();
+  await settle();
+  invalidate();
+  server.username = 'bob'; server.binding = B_BINDING; server.privateState = BOB;
+  await store.load();
+  assert.equal(store.state.habits[0].name, 'Bob private habit', 'old flush tracking resets at an auth boundary');
+  server.override = ({ init }) => {
+    if (!init.keepalive) return undefined;
+    assert.equal(new Headers(init.headers).get('X-Steady-Session'), B_BINDING);
+    return newWrite.promise;
+  };
+  store.renameHabit('bob-habit', 'Still typing after wake');
+  store.flushPending();
+  await settle();
+  oldWrite.resolve(response());
+  await settle();
+  await store.refresh();
+  assert.equal(store.auth.status, 'authenticated');
+  assert.equal(store.state.habits[0].name, 'Still typing after wake');
+  newWrite.resolve(response());
+  await settle();
+  server.privateState = {
+    ...BOB, accent: '#3FB8B0',
+    habits: [{ ...BOB.habits[0], name: 'Still typing after wake' }],
+  };
+  server.override = undefined;
+  await store.refresh();
+  assert.equal(store.state.habits[0].name, 'Still typing after wake');
+  assert.equal(store.state.accent, '#3FB8B0', 'new flush completion must release exactly its own accounting');
 });

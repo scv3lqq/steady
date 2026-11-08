@@ -16,7 +16,7 @@ Steady is a minimal single-page habit tracker: one Go binary that serves an embe
 
 Data model: users own habits and settings; habits retain day marks, position and soft-delete state. Sessions persist only token hashes and expiry. Day keys are built by the browser in its local timezone; the server only validates and stores them. Deleting a habit soft-deletes it, so Undo restores it at its original position. Ordinary owned soft-deleted rows are purged 24 h after deletion (on startup and on each delete). Migration marks existing soft-deleted rows `legacy_preserved`; purge excludes both unowned and preserved rows, including after bootstrap and restart. Restore clears preservation, so a later explicit delete uses ordinary 24-hour retention. New accounts have empty habits and default settings. Every repository read and mutation enforces session-derived user ownership, including day marks, delete and Undo.
 
-Generated code is committed: `web/dist/` (so `go build` and `go install` need only the Go toolchain) and the sqlc output. CI fails if either is stale.
+Generated code is committed: `web/dist/` (so `go build` and `go install` need only the Go toolchain) and the sqlc output. CI fails if either is stale. Frontend gates invoking `tsc` write all of `web/dist/`; serialize those gates even when source-file ownership is disjoint.
 
 ## Development commands
 
@@ -38,7 +38,9 @@ Generated code is committed: `web/dist/` (so `go build` and `go install` need on
 - Authentication tests for changed flows must enforce the actual HTTP cookie, binding-header and status contract in their doubles. Confirm login, state loading, logout/reload and peer-tab expiry against the real handler; a mocked success response alone does not prove session revocation.
 - Source files contain no literal em dash (U+2014). Where the UI needs one, build it with `String.fromCharCode(0x2014)`.
 - Commits: Conventional Commits, imperative mood, subject at most 72 characters, signed. Trunk-based: short-lived branches off `main`.
+- Keep pre-merge code acceptance separate from delivery steps (merge, push, CI and deployment); waiting for delivery is not a code failure.
 - Finish verified work by merging into `main` and pushing it without another approval pause. Check the resulting CI, then delete all non-`main` local and `origin` branches in this repository. Do not leave a draft PR as the completed result.
+- Report merge/push, CI and deployment separately. For runtime changes, confirm the running revision matches the delivered commit and the service is healthy through already-authorized server access; otherwise mark deployment unverified. Green CI alone does not prove deployment.
 - Public-ready: English only; no personal hosts, IPs, domains or home paths anywhere in the repo.
 
 ## Setup, deployment and data safety

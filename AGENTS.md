@@ -39,7 +39,7 @@ Generated code is committed: `web/dist/` (so `go build` and `go install` need on
 - Source files contain no literal em dash (U+2014). Where the UI needs one, build it with `String.fromCharCode(0x2014)`.
 - Commits: Conventional Commits, imperative mood, subject at most 72 characters, signed. Trunk-based: short-lived branches off `main`.
 - Keep pre-merge code acceptance separate from delivery steps (merge, push, CI and deployment); waiting for delivery is not a code failure.
-- Finish verified work by merging into `main` and pushing it without another approval pause. Check the resulting CI, then delete all non-`main` local and `origin` branches in this repository. Do not leave a draft PR as the completed result.
+- Proceed with routine reversible actions within explicitly authorized scope without repeat confirmation. Merge only when authorized; commit and push each require separate user authorization for the particular action, unless already explicitly authorized. After authorized delivery, check CI, then delete all non-`main` local and `origin` branches in this repository. Do not leave a draft PR as the completed result.
 - Report merge/push, CI and deployment separately. For runtime changes, confirm the running revision matches the delivered commit and the service is healthy through already-authorized server access; otherwise mark deployment unverified. Green CI alone does not prove deployment.
 - Public-ready: English only; no personal hosts, IPs, domains or home paths anywhere in the repo.
 
